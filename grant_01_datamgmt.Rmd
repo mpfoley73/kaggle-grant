@@ -1,0 +1,64 @@
+---
+title: "Kaggle - Grant Prediction"
+subtitle: "Step 1: Data Management"
+author: "Michael Foley"
+date: "4/6/2020"
+output: 
+  html_document:
+    theme: flatly
+    toc: true
+    highlight: haddock
+    fig_width: 9
+    fig_caption: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+This is an analysis of the *Grant Status* dataset for the Kaggle competition [Predict Grant Applications](https://www.kaggle.com/c/unimelb).  Kaggle's Grant Applications competition challenges participants to predict the success (1 = successful, 0 = unsuccessful) of 2,176 grant applications submitted submitted by the University of Melbourne between 2009 and 2010.  The training and test datasets include 249 features. The training dataset contains 8,707 observations from applications made between 2005 and 2008.  Competitors build a predictive model with the training dataset, then apply the model to the test dataset to produce a submission file consisting of the observation id and the predicted probability of application success.  Kaggle evaluates submissions based on the area under the ROC curve (AUC).
+
+This document addresses initial data management: data cleaning and imputation.
+
+
+# Setup
+
+```{r message=FALSE}
+library(tidyverse)
+```
+
+
+# Load Data
+
+```{r warning=FALSE, message=FALSE}
+d_unimelb_train <- read_csv("./unimelb_training.csv") %>% 
+  mutate(Set = "unimelb_train")
+
+d_unimelb_test <- read_csv("./unimelb_test.csv") %>% 
+  mutate(Set = "unimelb_test", Grant.Status = NA)
+
+d_unimelb <- rbind(d_unimelb_train, d_unimelb_test)
+
+d_unimelb$X252 <- NULL  # extra col loaded by read_csv
+
+names(d_unimelb) <- janitor::make_clean_names(names(d_unimelb), case = "snake")
+
+d_unimelb <- d_unimelb %>% 
+  select(set, grant_application_id, grant_status, sort(names(d_unimelb)))
+```
+
+
+# Clean Data
+
+```{r}
+d_unimelb_clean <- d_unimelb %>% 
+  mutate(
+    start_date = lubridate::dmy(start_date)
+  ) 
+```
+
+
+# Manage Data
+
+# Save Work
