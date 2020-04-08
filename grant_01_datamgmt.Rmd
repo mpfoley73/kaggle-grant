@@ -39,26 +39,428 @@ d_unimelb_test <- read_csv("./unimelb_test.csv") %>%
   mutate(Set = "unimelb_test", Grant.Status = NA)
 
 d_unimelb <- rbind(d_unimelb_train, d_unimelb_test)
-
-d_unimelb$X252 <- NULL  # extra col loaded by read_csv
-
-names(d_unimelb) <- janitor::make_clean_names(names(d_unimelb), case = "snake")
-
-d_unimelb <- d_unimelb %>% 
-  select(set, grant_application_id, grant_status, sort(names(d_unimelb)))
 ```
 
 
 # Clean Data
 
 ```{r}
-d_unimelb_clean <- d_unimelb %>% 
-  mutate(
-    start_date = lubridate::dmy(start_date)
-  ) 
-```
+d_unimelb$X252 <- NULL  # extra col loaded by read_csv
 
+names(d_unimelb) <- janitor::make_clean_names(names(d_unimelb), case = "snake")
+
+# The fields load with a variety of data types.  Fix them.
+d_unimelb <- d_unimelb %>% 
+  select(set, grant_application_id, grant_status, sort(names(d_unimelb))) %>%
+  mutate_at(vars(contract_value_band_see_note_a:no_of_years_in_uni_at_time_of_grant_9,
+                 person_id_1:rfcd_code_5,
+                 role_1:seo_code_5,
+                 sponsor_code,
+                 with_phd_1:with_phd_9), 
+            as.character) %>%
+  mutate_at(vars(a_1:c_9, 
+                 number_of_successful_grant_1:number_of_unsuccessful_grant_9,
+                 rfcd_percentage_1:rfcd_percentage_5,
+                 seo_percentage_1:seo_percentage_5,
+                 year_of_birth_1:year_of_birth_9),
+            as.numeric) %>%
+  mutate_at(vars(start_date),
+            lubridate::dmy)
+
+glimpse(d_unimelb)
+```
 
 # Manage Data
 
+There are 15 role columns (`role_1:role_15`) with attributes several attributes per role stored in a separate column.  Create role-specific count variables for home language, nationality, degree, etc. For example, `role_ci` is the number of chief investigators, `cntry_ci_Australia` is the number of chief investigators from Australia, and `success_ci` is the number of successful grants from all chief investigators on the grant.
+
+## Create data frame with one row per app per role
+
+```{r}
+d_unimelb_01 <- d_unimelb %>%
+  select(
+    c(set:grant_status), contract_value_band_see_note_a, 
+    cntry = country_of_birth_1, dept = dept_no_1, faculty = faculty_no_1,
+    grant_category_code, 
+    lang = home_language_1, tenure = no_of_years_in_uni_at_time_of_grant_1,
+    success_n = number_of_successful_grant_1, 
+    fail_n = number_of_unsuccessful_grant_1, person = person_id_1,
+    c(rfcd_code_1:rfcd_percentage_5), role = role_1, 
+    c(seo_code_1:start_date), phd = with_phd_1, born = year_of_birth_1
+  )
+d_unimelb_02 <- d_unimelb %>%
+  select(
+    c(set:grant_status), contract_value_band_see_note_a, 
+    cntry = country_of_birth_2, dept = dept_no_2, faculty = faculty_no_2,
+    grant_category_code, 
+    lang = home_language_2, tenure = no_of_years_in_uni_at_time_of_grant_2,
+    success_n = number_of_successful_grant_2, 
+    fail_n = number_of_unsuccessful_grant_2, person = person_id_2,
+    c(rfcd_code_1:rfcd_percentage_5), role = role_2, 
+    c(seo_code_1:start_date), phd = with_phd_2, born = year_of_birth_2
+  )
+d_unimelb_03 <- d_unimelb %>%
+  select(
+    c(set:grant_status), contract_value_band_see_note_a, 
+    cntry = country_of_birth_3, dept = dept_no_3, faculty = faculty_no_3,
+    grant_category_code, 
+    lang = home_language_3, tenure = no_of_years_in_uni_at_time_of_grant_3,
+    success_n = number_of_successful_grant_3, 
+    fail_n = number_of_unsuccessful_grant_3, person = person_id_3,
+    c(rfcd_code_1:rfcd_percentage_5), role = role_3, 
+    c(seo_code_1:start_date), phd = with_phd_3, born = year_of_birth_3
+  )
+d_unimelb_04 <- d_unimelb %>%
+  select(
+    c(set:grant_status), contract_value_band_see_note_a, 
+    cntry = country_of_birth_4, dept = dept_no_4, faculty = faculty_no_4,
+    grant_category_code, 
+    lang = home_language_4, tenure = no_of_years_in_uni_at_time_of_grant_4,
+    success_n = number_of_successful_grant_4, 
+    fail_n = number_of_unsuccessful_grant_4, person = person_id_4,
+    c(rfcd_code_1:rfcd_percentage_5), role = role_4, 
+    c(seo_code_1:start_date), phd = with_phd_4, born = year_of_birth_4
+  )
+d_unimelb_05 <- d_unimelb %>%
+  select(
+    c(set:grant_status), contract_value_band_see_note_a, 
+    cntry = country_of_birth_5, dept = dept_no_5, faculty = faculty_no_5,
+    grant_category_code, 
+    lang = home_language_5, tenure = no_of_years_in_uni_at_time_of_grant_5,
+    success_n = number_of_successful_grant_5, 
+    fail_n = number_of_unsuccessful_grant_5, person = person_id_5,
+    c(rfcd_code_1:rfcd_percentage_5), role = role_5, 
+    c(seo_code_1:start_date), phd = with_phd_5, born = year_of_birth_5
+  )
+d_unimelb_06 <- d_unimelb %>%
+  select(
+    c(set:grant_status), contract_value_band_see_note_a, 
+    cntry = country_of_birth_6, dept = dept_no_6, faculty = faculty_no_6,
+    grant_category_code, 
+    lang = home_language_6, tenure = no_of_years_in_uni_at_time_of_grant_6,
+    success_n = number_of_successful_grant_6, 
+    fail_n = number_of_unsuccessful_grant_6, person = person_id_6,
+    c(rfcd_code_1:rfcd_percentage_5), role = role_6, 
+    c(seo_code_1:start_date), phd = with_phd_6, born = year_of_birth_6
+  )
+d_unimelb_07 <- d_unimelb %>%
+  select(
+    c(set:grant_status), contract_value_band_see_note_a, 
+    cntry = country_of_birth_7, dept = dept_no_7, faculty = faculty_no_7,
+    grant_category_code, 
+    lang = home_language_7, tenure = no_of_years_in_uni_at_time_of_grant_7,
+    success_n = number_of_successful_grant_7, 
+    fail_n = number_of_unsuccessful_grant_7, person = person_id_7,
+    c(rfcd_code_1:rfcd_percentage_5), role = role_7, 
+    c(seo_code_1:start_date), phd = with_phd_7, born = year_of_birth_7
+  )
+d_unimelb_08 <- d_unimelb %>%
+  select(
+    c(set:grant_status), contract_value_band_see_note_a, 
+    cntry = country_of_birth_8, dept = dept_no_8, faculty = faculty_no_8,
+    grant_category_code, 
+    lang = home_language_8, tenure = no_of_years_in_uni_at_time_of_grant_8,
+    success_n = number_of_successful_grant_8, 
+    fail_n = number_of_unsuccessful_grant_8, person = person_id_8,
+    c(rfcd_code_1:rfcd_percentage_5), role = role_8, 
+    c(seo_code_1:start_date), phd = with_phd_8, born = year_of_birth_8
+  )
+d_unimelb_09 <- d_unimelb %>%
+  select(
+    c(set:grant_status), contract_value_band_see_note_a, 
+    cntry = country_of_birth_9, dept = dept_no_9, faculty = faculty_no_9,
+    grant_category_code, 
+    lang = home_language_9, tenure = no_of_years_in_uni_at_time_of_grant_9,
+    success_n = number_of_successful_grant_9, 
+    fail_n = number_of_unsuccessful_grant_9, person = person_id_9,
+    c(rfcd_code_1:rfcd_percentage_5), role = role_9, 
+    c(seo_code_1:start_date), phd = with_phd_9, born = year_of_birth_9
+  )
+d_unimelb_10 <- d_unimelb %>%
+  select(
+    c(set:grant_status), contract_value_band_see_note_a, 
+    cntry = country_of_birth_10, dept = dept_no_10, faculty = faculty_no_10,
+    grant_category_code, 
+    lang = home_language_10, tenure = no_of_years_in_uni_at_time_of_grant_10,
+    success_n = number_of_successful_grant_10, 
+    fail_n = number_of_unsuccessful_grant_10, person = person_id_10,
+    c(rfcd_code_1:rfcd_percentage_5), role = role_10, 
+    c(seo_code_1:start_date), phd = with_phd_10, born = year_of_birth_10
+  )
+d_unimelb_11 <- d_unimelb %>%
+  select(
+    c(set:grant_status), contract_value_band_see_note_a, 
+    cntry = country_of_birth_11, dept = dept_no_11, faculty = faculty_no_11,
+    grant_category_code, 
+    lang = home_language_11, tenure = no_of_years_in_uni_at_time_of_grant_11,
+    success_n = number_of_successful_grant_11, 
+    fail_n = number_of_unsuccessful_grant_11, person = person_id_11,
+    c(rfcd_code_1:rfcd_percentage_5), role = role_11, 
+    c(seo_code_1:start_date), phd = with_phd_11, born = year_of_birth_11
+  )
+d_unimelb_12 <- d_unimelb %>%
+  select(
+    c(set:grant_status), contract_value_band_see_note_a, 
+    cntry = country_of_birth_12, dept = dept_no_12, faculty = faculty_no_12,
+    grant_category_code, 
+    lang = home_language_12, tenure = no_of_years_in_uni_at_time_of_grant_12,
+    success_n = number_of_successful_grant_12, 
+    fail_n = number_of_unsuccessful_grant_12, person = person_id_12,
+    c(rfcd_code_1:rfcd_percentage_5), role = role_12, 
+    c(seo_code_1:start_date), phd = with_phd_12, born = year_of_birth_12
+  )
+d_unimelb_13 <- d_unimelb %>%
+  select(
+    c(set:grant_status), contract_value_band_see_note_a, 
+    cntry = country_of_birth_13, dept = dept_no_13, faculty = faculty_no_13,
+    grant_category_code, 
+    lang = home_language_13, tenure = no_of_years_in_uni_at_time_of_grant_13,
+    success_n = number_of_successful_grant_13, 
+    fail_n = number_of_unsuccessful_grant_13, person = person_id_13,
+    c(rfcd_code_1:rfcd_percentage_5), role = role_13, 
+    c(seo_code_1:start_date), phd = with_phd_13, born = year_of_birth_13
+  )
+d_unimelb_14 <- d_unimelb %>%
+  select(
+    c(set:grant_status), contract_value_band_see_note_a, 
+    cntry = country_of_birth_14, dept = dept_no_14, faculty = faculty_no_14,
+    grant_category_code, 
+    lang = home_language_14, tenure = no_of_years_in_uni_at_time_of_grant_14,
+    success_n = number_of_successful_grant_14, 
+    fail_n = number_of_unsuccessful_grant_14, person = person_id_14,
+    c(rfcd_code_1:rfcd_percentage_5), role = role_14, 
+    c(seo_code_1:start_date), phd = with_phd_14, born = year_of_birth_14
+  )
+d_unimelb_15 <- d_unimelb %>%
+  select(
+    c(set:grant_status), contract_value_band_see_note_a, 
+    cntry = country_of_birth_15, dept = dept_no_15, faculty = faculty_no_15,
+    grant_category_code, 
+    lang = home_language_15, tenure = no_of_years_in_uni_at_time_of_grant_15,
+    success_n = number_of_successful_grant_15, 
+    fail_n = number_of_unsuccessful_grant_15, person = person_id_15,
+    c(rfcd_code_1:rfcd_percentage_5), role = role_15, 
+    c(seo_code_1:start_date), phd = with_phd_15, born = year_of_birth_15
+  )
+d_unimelb_long <- bind_rows(
+  d_unimelb_01, d_unimelb_02, d_unimelb_03, d_unimelb_04, d_unimelb_05,
+  d_unimelb_06, d_unimelb_07, d_unimelb_08, d_unimelb_09, d_unimelb_10,
+  d_unimelb_11, d_unimelb_12, d_unimelb_13, d_unimelb_14, d_unimelb_15
+)
+rm (
+  d_unimelb_01, d_unimelb_02, d_unimelb_03, d_unimelb_04, d_unimelb_05,
+  d_unimelb_06, d_unimelb_07, d_unimelb_08, d_unimelb_09, d_unimelb_10,
+  d_unimelb_11, d_unimelb_12, d_unimelb_13, d_unimelb_14, d_unimelb_15
+)
+
+d_unimelb_long <- d_unimelb_long %>%
+  mutate(
+    start_date = lubridate::dmy(start_date),
+    role = case_when(role == "CHIEF_INVESTIGATOR" ~ "ci",
+                     role == "DELEGATED_RESEARCHER" ~ "dr",
+                     role == "EXT_CHIEF_INVESTIGATOR" ~ "eci",
+                     role == "EXTERNAL_ADVISOR" ~ "ea",
+                     role == "HONVISIT" ~ "hv",
+                     role == "PRINCIPAL_SUPERVISOR" ~ "ps",
+                     role == "STUD_CHIEF_INVESTIGATOR" ~ "sci",
+                     role == "STUDRES" ~ "sr",
+                     TRUE ~ as.character(NA))
+  )
+
+glimpse(d_unimelb_long)
+```
+
+## Create data frame with role "count" columns
+
+For each role attribute, create a pivoted data frame, one row per app, with cols for each attribute value.  Join them to create a single data frame with one row per app, with many, many attribute columns.
+
+```{r}
+d_unimelb_clean_1 <- d_unimelb %>% 
+  replace_na(list(a_1 = 0, a_2 = 0, a_3 = 0, a_4 = 0, a_5 = 0,
+                  a_6 = 0, a_7 = 0, a_8 = 0, a_9 = 0, a_10 = 0,
+                  a_11 = 0, a_12 = 0, a_13 = 0, a_14 = 0, a_15 = 0,
+                  a_1_2 = 0, a_2_2 = 0, a_3_2 = 0, a_4_2 = 0, a_5_2 = 0,
+                  a_6_2 = 0, a_7_2 = 0, a_8_2 = 0, a_9_2 = 0, a_10_2 = 0,
+                  a_11_2 = 0, a_12_2 = 0, a_13_2 = 0, a_14_2 = 0, a_15_2 = 0,
+                  b_1 = 0, b_2 = 0, b_3 = 0, b_4 = 0, b_5 = 0,
+                  b_6 = 0, b_7 = 0, b_8 = 0, b_9 = 0, b_10 = 0,
+                  b_11 = 0, b_12 = 0, b_13 = 0, b_14 = 0, b_15 = 0,
+                  c_1 = 0, c_2 = 0, c_3 = 0, c_4 = 0, c_5 = 0,
+                  c_6 = 0, c_7 = 0, c_8 = 0, c_9 = 0, c_10 = 0,
+                  c_11 = 0, c_12 = 0, c_13 = 0, c_14 = 0, c_15 = 0)) %>%
+  mutate(
+    pubs_a1 = a_1 + a_2 + a_3 + a_4 + a_5 + a_6 + a_7 + a_8 + a_9 + a_10 +
+      a_11 + a_12 + a_13 + a_14 + a_15,
+    pubs_a2 = a_1_2 + a_2_2 + a_3_2 + a_4_2 + a_5_2 + a_6_2 + a_7_2 + a_8_2 + 
+      a_9_2 + a_10_2 +a_11_2 + a_12_2 + a_13_2 + a_14_2 + a_15_2,
+    pubs_b = b_1 + b_2 + b_3 + b_4 + b_5 + b_6 + b_7 + b_8 + b_9 + b_10 +
+      b_11 + b_12 + b_13 + b_14 + b_15,
+    pubs_c = c_1 + c_2 + c_3 + c_4 + c_5 + c_6 + c_7 + c_8 + c_9 + c_10 +
+      c_11 + c_12 + c_13 + c_14 + c_15
+  ) %>%
+  select(
+    set, grant_application_id, grant_status, 
+    pubs_a1, pubs_a2, pubs_b, pubs_c,
+    value_band = contract_value_band_see_note_a, category = grant_category_code,
+    c(rfcd_code_1:rfcd_percentage_5), c(seo_code_1:start_date)
+  ) 
+d_unimelb_clean_2 <- d_unimelb_long %>% 
+  mutate(n = 1) %>%
+  pivot_wider(
+    id_cols = c(set, grant_application_id), 
+    names_from = role, names_prefix = "role_", 
+    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0)
+  )
+d_unimelb_clean_3 <- d_unimelb_long %>% 
+  mutate(x = paste(role, lang, sep = "_"), n = 1) %>%
+  pivot_wider(
+    id_cols = c(set, grant_application_id), 
+    names_from = x, names_prefix = "lang_", 
+    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0)
+  )
+d_unimelb_clean_4 <- d_unimelb_long %>% 
+  mutate(cntry = str_replace_all(cntry, " ", "_"),
+         x = paste(role, cntry, sep = "_"), n = 1) %>%
+  pivot_wider(
+    id_cols = c(set, grant_application_id), 
+    names_from = x, names_prefix = "cntry_", 
+    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0)
+  )
+d_unimelb_clean_5 <- d_unimelb_long %>% 
+  mutate(x = paste(role, phd, sep = "_"), n = 1) %>%
+  pivot_wider(
+    id_cols = c(set, grant_application_id), 
+    names_from = x, names_prefix = "phd_", 
+    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0)
+  )
+d_unimelb_clean_6 <- d_unimelb_long %>% 
+  mutate(x = paste(role, born, sep = "_"), n = 1) %>%
+  pivot_wider(
+    id_cols = c(set, grant_application_id), 
+    names_from = x, names_prefix = "born_", 
+    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0)
+  )
+d_unimelb_clean_7 <- d_unimelb_long %>% 
+  mutate(x = paste(role, dept, sep = "_"), n = 1) %>%
+  pivot_wider(
+    id_cols = c(set, grant_application_id), 
+    names_from = x, names_prefix = "dept_", 
+    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0)
+  )
+d_unimelb_clean_8 <- d_unimelb_long %>% 
+  mutate(x = paste(role, faculty, sep = "_"), n = 1) %>%
+  pivot_wider(
+    id_cols = c(set, grant_application_id), 
+    names_from = x, names_prefix = "faculty_", 
+    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0)
+  )
+d_unimelb_clean_9 <- d_unimelb_long %>% 
+  mutate(tenure = str_replace_all(tenure, " ", "_"),
+         tenure = str_replace_all(tenure, ">=", "gte"),
+         tenure = str_replace_all(tenure, ">", "gt"),
+         x = paste(role, tenure, sep = "_"), n = 1) %>%
+  pivot_wider(
+    id_cols = c(set, grant_application_id), 
+    names_from = x, names_prefix = "tenure_", 
+    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0)
+  )
+d_unimelb_clean_10 <- d_unimelb_long %>% 
+  pivot_wider(
+    id_cols = c(set, grant_application_id), 
+    names_from = role, names_prefix = "success_", 
+    values_from = success_n, values_fn = list(success_n = sum), 
+    values_fill = list(success_n = 0)
+  )
+d_unimelb_clean_11 <- d_unimelb_long %>% 
+  pivot_wider(
+    id_cols = c(set, grant_application_id), 
+    names_from = role, names_prefix = "fail_", 
+    values_from = fail_n, values_fn = list(fail_n = sum), 
+    values_fill = list(fail_n = 0)
+  )
+
+d_unimelb_clean <- d_unimelb_clean_1 %>%
+  inner_join(d_unimelb_clean_2, by = c("set", "grant_application_id")) %>%
+  inner_join(d_unimelb_clean_3, by = c("set", "grant_application_id")) %>%
+  inner_join(d_unimelb_clean_4, by = c("set", "grant_application_id")) %>%
+  inner_join(d_unimelb_clean_5, by = c("set", "grant_application_id")) %>%
+  inner_join(d_unimelb_clean_6, by = c("set", "grant_application_id")) %>%
+  inner_join(d_unimelb_clean_7, by = c("set", "grant_application_id")) %>%
+  inner_join(d_unimelb_clean_8, by = c("set", "grant_application_id")) %>%
+  inner_join(d_unimelb_clean_9, by = c("set", "grant_application_id")) %>%
+  inner_join(d_unimelb_clean_10, by = c("set", "grant_application_id")) %>%
+  inner_join(d_unimelb_clean_11, by = c("set", "grant_application_id"))
+
+rm(
+  d_unimelb_clean_1, d_unimelb_clean_2, d_unimelb_clean_3, d_unimelb_clean_4,
+  d_unimelb_clean_5, d_unimelb_clean_6, d_unimelb_clean_7, d_unimelb_clean_8,
+  d_unimelb_clean_9, d_unimelb_clean_10, d_unimelb_clean_11
+)
+
+rm(d_unimelb_long)
+
+glimpse(d_unimelb_clean)
+```
+
+
+## Create data frame with code "count" columns
+
+Repeat the process from before, but this time for the 5 RFCD codes and 5 SEO codes.  Count the number of codes with percent>0.
+
+```{r}
+d_unimelb_1 <- d_unimelb %>%
+  select(set, grant_application_id, 
+         rfcd_code = rfcd_code_1, rfcd_pct = rfcd_percentage_1,
+         seo_code = seo_code_1, seo_pct = seo_percentage_1)
+d_unimelb_2 <- d_unimelb %>%
+  select(set, grant_application_id, 
+         rfcd_code = rfcd_code_2, rfcd_pct = rfcd_percentage_2,
+         seo_code = seo_code_2, seo_pct = seo_percentage_2)
+d_unimelb_3 <- d_unimelb %>%
+  select(set, grant_application_id, 
+         rfcd_code = rfcd_code_3, rfcd_pct = rfcd_percentage_3,
+         seo_code = seo_code_3, seo_pct = seo_percentage_3)
+d_unimelb_4 <- d_unimelb %>%
+  select(set, grant_application_id, 
+         rfcd_code = rfcd_code_4, rfcd_pct = rfcd_percentage_4,
+         seo_code = seo_code_4, seo_pct = seo_percentage_4)
+d_unimelb_5 <- d_unimelb %>%
+  select(set, grant_application_id, 
+         rfcd_code = rfcd_code_5, rfcd_pct = rfcd_percentage_5,
+         seo_code = seo_code_5, seo_pct = seo_percentage_5)
+d_unimelb_long <- bind_rows(
+  d_unimelb_1, d_unimelb_2, d_unimelb_3, d_unimelb_4, d_unimelb_5
+)
+
+rm(d_unimelb_1, d_unimelb_2, d_unimelb_3, d_unimelb_4, d_unimelb_5)
+
+d_unimelb_rfcd <- d_unimelb_long %>%
+  mutate(n = if_else(rfcd_pct > 0, 1, 0)) %>%
+  pivot_wider(
+    id_cols = c(set, grant_application_id),
+    names_from = rfcd_code, names_prefix = "rfcd_",
+    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0))
+d_unimelb_seo <- d_unimelb_long %>%
+  mutate(n = if_else(seo_pct > 0, 1, 0)) %>%
+  pivot_wider(
+    id_cols = c(set, grant_application_id),
+    names_from = seo_code, names_prefix = "seo_",
+    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0))
+d_unimelb_clean <- d_unimelb_clean %>%
+  inner_join(d_unimelb_rfcd, by = c("set", "grant_application_id")) %>%
+  inner_join(d_unimelb_seo, by = c("set", "grant_application_id")) %>%
+  select(-c(rfcd_code_1:seo_percentage_5))
+
+rm(d_unimelb_rfcd, d_unimelb_seo, d_unimelb_long)
+
+glimpse(d_unimelb_clean)
+```
+
+
 # Save Work
+
+```{r}
+d_unimelb <- d_unimelb_clean
+save(d_unimelb, file = "./grant_01.RDS")
+```
+
