@@ -1,0 +1,44 @@
+---
+title: "Kaggle - Grant Prediction"
+subtitle: "Step 2: Exploratory Data Analysis"
+author: "Michael Foley"
+date: "4/12/2020"
+output: 
+  html_document:
+    theme: flatly
+    toc: true
+    highlight: haddock
+    fig_width: 9
+    fig_caption: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+A cursory, univariate review of the newly encoded data uncovers a few  interesting relationships with the response.
+
+
+# Setup
+
+```{r message=FALSE}
+library(tidyverse)
+library(caret)
+```
+
+
+# Load Data
+
+```{r warning=FALSE, message=FALSE}
+load("./grant_01.RData")
+training <- training %>% select(Class, sort(colnames(training)))
+glimpse(training)
+```
+
+
+# Univariate Analysis
+
+What continuous variables are likely to be important predictors of the response variable?
+
+

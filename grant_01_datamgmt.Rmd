@@ -17,450 +17,388 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
-This is an analysis of the *Grant Status* dataset for the Kaggle competition [Predict Grant Applications](https://www.kaggle.com/c/unimelb).  Kaggle's Grant Applications competition challenges participants to predict the success (1 = successful, 0 = unsuccessful) of 2,176 grant applications submitted submitted by the University of Melbourne between 2009 and 2010.  The training and test datasets include 249 features. The training dataset contains 8,707 observations from applications made between 2005 and 2008.  Competitors build a predictive model with the training dataset, then apply the model to the test dataset to produce a submission file consisting of the observation id and the predicted probability of application success.  Kaggle evaluates submissions based on the area under the ROC curve (AUC).
+This is an analysis of the *Grant Status* dataset for the Kaggle competition [Predict Grant Applications](https://www.kaggle.com/c/unimelb).  Kaggle's Grant Applications competition challenges participants to predict the success (1 = successful, 0 = unsuccessful) of 2,176 grant applications submitted by the University of Melbourne between 2009 and 2010.  The training and test datasets include 249 features. The training dataset contains 8,707 observations from applications made between 2005 and 2008.  Competitors build a predictive model with the training dataset, then apply the model to the test dataset to produce a submission file consisting of the observation id and the predicted probability of application success.  Kaggle evaluates submissions based on the area under the ROC curve (AUC).
 
-This document addresses initial data management: data cleaning and imputation.
+This document addresses initial data management.
 
 
 # Setup
 
 ```{r message=FALSE}
 library(tidyverse)
+library(lubridate)
+library(caret)
 ```
 
 
 # Load Data
 
 ```{r warning=FALSE, message=FALSE}
-d_unimelb_train <- read_csv("./unimelb_training.csv") %>% 
-  mutate(Set = "unimelb_train")
+d_raw_1 <- read_csv("./unimelb_training.csv", guess_max = 10000)
 
-d_unimelb_test <- read_csv("./unimelb_test.csv") %>% 
-  mutate(Set = "unimelb_test", Grant.Status = NA)
-
-d_unimelb <- rbind(d_unimelb_train, d_unimelb_test)
+glimpse(d_raw_1)
 ```
 
 
 # Clean Data
 
+## Fix data types
+
 ```{r}
-d_unimelb$X252 <- NULL  # extra col loaded by read_csv
-
-names(d_unimelb) <- janitor::make_clean_names(names(d_unimelb), case = "snake")
-
-# The fields load with a variety of data types.  Fix them.
-d_unimelb <- d_unimelb %>% 
-  select(set, grant_application_id, grant_status, sort(names(d_unimelb))) %>%
-  mutate_at(vars(contract_value_band_see_note_a:no_of_years_in_uni_at_time_of_grant_9,
-                 person_id_1:rfcd_code_5,
-                 role_1:seo_code_5,
-                 sponsor_code,
-                 with_phd_1:with_phd_9), 
-            as.character) %>%
-  mutate_at(vars(a_1:c_9, 
-                 number_of_successful_grant_1:number_of_unsuccessful_grant_9,
-                 rfcd_percentage_1:rfcd_percentage_5,
-                 seo_percentage_1:seo_percentage_5,
-                 year_of_birth_1:year_of_birth_9),
-            as.numeric) %>%
-  mutate_at(vars(start_date),
-            lubridate::dmy)
-
-glimpse(d_unimelb)
+d_raw_2 <- d_raw_1 %>%
+  mutate(
+    X252 = NULL,  # extra col loaded by read_csv
+    Role.1 = replace_na(Role.1, "Unk"),  # Force a value for Role.1
+    Sponsor.Code = factor(paste0("Sponsor", replace_na(Sponsor.Code, "Unk"))),
+    Grant.Category.Code = factor(paste0("GrantCat", replace_na(Grant.Category.Code, "Unk"))),
+    Contract.Value.Band...see.note.A =  factor(paste0("ContractValueBand", replace_na(Contract.Value.Band...see.note.A, "Unk"))),
+    Start.date = lubridate::dmy(Start.date),
+  ) %>%
+  mutate_at(vars(
+      starts_with("Person.ID."),
+      starts_with("Role."),
+      starts_with("RFCD.Code."),
+      starts_with("SEO.Code."),
+      starts_with("Country.of.Birth"),
+      starts_with("Home.Language."),
+      starts_with("Dept.No.."),
+      starts_with("Faculty.No.."),
+      starts_with("No..of.Years.in.Uni.at.Time.of.Grant."),
+      starts_with("With.PHD.")
+    ),
+    as.character
+  ) %>%
+  mutate_at(vars(
+      starts_with("Year.of.Birth."),
+      starts_with("Number.of.Successful.Grant."),
+      starts_with("Number.of.Unsuccessful.Grant."),
+      starts_with("A.."),
+      starts_with("A."),
+      starts_with("B."),
+      starts_with("C.")
+    ),
+    as.numeric
+  )
+glimpse(d_raw_2)
 ```
+
+## Transform 15 roles into 15 rows
+
+There are 15 roles on the grant application with associated attributes.  Transform these 15 sets of columns into 15 sets of rows.
+
+```{r}
+tmp <- vector(mode = "list", length = 15)
+for (i in 1:15) {
+  x <- select_at(d_raw_2, vars(c(1:6), ends_with(paste0(".", i))))
+  names(x) <- str_remove(names(x), paste0(".", i))
+  if(all(names(x) != "RFCD.Code")) x$RFCD.Code <- NA
+  if(all(names(x) != "RFCD.Percentage")) x$RFCD.Percentage <- NA
+  if(all(names(x) != "SEO.Code")) x$SEO.Code <- NA
+  if(all(names(x) != "SEO.Percentage")) x$SEO.Percentage <- NA
+  tmp[[i]] = x
+}
+
+d_raw_3 <- bind_rows(tmp)
+
+d_raw_3 <- filter(d_raw_3, !is.na(Role))
+
+rm(tmp, i, x)
+
+glimpse(d_raw_3)
+```
+
+## Clean text and make factors
+
+```{r}
+d_raw_4 <- d_raw_3 %>% 
+  mutate(
+    Year.of.Birth = factor(Year.of.Birth),
+    Country.of.Birth = factor(str_remove_all(Country.of.Birth, " ")),
+    Home.Language = factor(str_replace(Home.Language, "Other", "OtherLang")),
+    With.PHD = str_replace(With.PHD, "Yes", "PhD"),
+    Dept.No. = factor(paste0("Dept", Dept.No.)),
+    Faculty.No. = factor(paste0("Faculty", Faculty.No.)),
+    RFCD.Percentage = if_else(
+      RFCD.Code %in% c("0", "999999"), as.numeric(NA), RFCD.Percentage),
+    RFCD.Code = factor(paste0("RFCD", if_else(
+      RFCD.Code %in% c("0", "999999"), as.character(NA), RFCD.Code))),
+    SEO.Percentage = if_else(
+      SEO.Code %in% c("0", "999999"), as.numeric(NA), SEO.Percentage),
+    SEO.Code = factor(paste0("SEO", if_else(
+      SEO.Code %in% c("0", "999999"), as.character(NA), SEO.Code))),
+    No..of.Years.in.Uni.at.Time.of.Grant = factor(case_when(
+      is.na(No..of.Years.in.Uni.at.Time.of.Grant) ~ "DurationUnk",
+      No..of.Years.in.Uni.at.Time.of.Grant == ">=0 to 5" ~ "Duration0to5",
+      No..of.Years.in.Uni.at.Time.of.Grant == ">5 to 10" ~ "Duration5to10",
+      No..of.Years.in.Uni.at.Time.of.Grant == ">10 to 15" ~ "Duration10to15",
+      No..of.Years.in.Uni.at.Time.of.Grant == "more than 15" ~ "DurationGT15",
+      No..of.Years.in.Uni.at.Time.of.Grant == "Less than 0" ~ "DurationLT0",
+      TRUE ~ as.character(NA)
+    )),
+    Role = case_when(
+      Role == "EXT_CHIEF_INVESTIGATOR" ~ "ECI",
+      Role == "STUD_CHIEF_INVESTIGATOR" ~ "SCI",
+      Role == "CHIEF_INVESTIGATOR" ~ "CI",
+      Role == "DELEGATED_RESEARCHER" ~ "DR",
+      Role == "EXTERNAL_ADVISOR" ~ "EA",
+      Role == "HONVISIT" ~ "HV",
+      Role == "PRINCIPAL_SUPERVISOR" ~ "PS",
+      Role == "STUDRES" ~ "SR",
+      TRUE ~ "UNK"
+    )
+  )
+glimpse(d_raw_4)
+```
+
 
 # Manage Data
 
-There are 15 role columns (`role_1:role_15`) with attributes several attributes per role stored in a separate column.  Create role-specific count variables for home language, nationality, degree, etc. For example, `role_ci` is the number of chief investigators, `cntry_ci_Australia` is the number of chief investigators from Australia, and `success_ci` is the number of successful grants from all chief investigators on the grant.
+## Create count vars
 
-## Create data frame with one row per app per role
+Create role-specific count variables for home language, nationality, degree, etc. 
+
+Define a function to perform pivoting.
 
 ```{r}
-d_unimelb_01 <- d_unimelb %>%
-  select(
-    c(set:grant_status), contract_value_band_see_note_a, 
-    cntry = country_of_birth_1, dept = dept_no_1, faculty = faculty_no_1,
-    grant_category_code, 
-    lang = home_language_1, tenure = no_of_years_in_uni_at_time_of_grant_1,
-    success_n = number_of_successful_grant_1, 
-    fail_n = number_of_unsuccessful_grant_1, person = person_id_1,
-    c(rfcd_code_1:rfcd_percentage_5), role = role_1, 
-    c(seo_code_1:start_date), phd = with_phd_1, born = year_of_birth_1
-  )
-d_unimelb_02 <- d_unimelb %>%
-  select(
-    c(set:grant_status), contract_value_band_see_note_a, 
-    cntry = country_of_birth_2, dept = dept_no_2, faculty = faculty_no_2,
-    grant_category_code, 
-    lang = home_language_2, tenure = no_of_years_in_uni_at_time_of_grant_2,
-    success_n = number_of_successful_grant_2, 
-    fail_n = number_of_unsuccessful_grant_2, person = person_id_2,
-    c(rfcd_code_1:rfcd_percentage_5), role = role_2, 
-    c(seo_code_1:start_date), phd = with_phd_2, born = year_of_birth_2
-  )
-d_unimelb_03 <- d_unimelb %>%
-  select(
-    c(set:grant_status), contract_value_band_see_note_a, 
-    cntry = country_of_birth_3, dept = dept_no_3, faculty = faculty_no_3,
-    grant_category_code, 
-    lang = home_language_3, tenure = no_of_years_in_uni_at_time_of_grant_3,
-    success_n = number_of_successful_grant_3, 
-    fail_n = number_of_unsuccessful_grant_3, person = person_id_3,
-    c(rfcd_code_1:rfcd_percentage_5), role = role_3, 
-    c(seo_code_1:start_date), phd = with_phd_3, born = year_of_birth_3
-  )
-d_unimelb_04 <- d_unimelb %>%
-  select(
-    c(set:grant_status), contract_value_band_see_note_a, 
-    cntry = country_of_birth_4, dept = dept_no_4, faculty = faculty_no_4,
-    grant_category_code, 
-    lang = home_language_4, tenure = no_of_years_in_uni_at_time_of_grant_4,
-    success_n = number_of_successful_grant_4, 
-    fail_n = number_of_unsuccessful_grant_4, person = person_id_4,
-    c(rfcd_code_1:rfcd_percentage_5), role = role_4, 
-    c(seo_code_1:start_date), phd = with_phd_4, born = year_of_birth_4
-  )
-d_unimelb_05 <- d_unimelb %>%
-  select(
-    c(set:grant_status), contract_value_band_see_note_a, 
-    cntry = country_of_birth_5, dept = dept_no_5, faculty = faculty_no_5,
-    grant_category_code, 
-    lang = home_language_5, tenure = no_of_years_in_uni_at_time_of_grant_5,
-    success_n = number_of_successful_grant_5, 
-    fail_n = number_of_unsuccessful_grant_5, person = person_id_5,
-    c(rfcd_code_1:rfcd_percentage_5), role = role_5, 
-    c(seo_code_1:start_date), phd = with_phd_5, born = year_of_birth_5
-  )
-d_unimelb_06 <- d_unimelb %>%
-  select(
-    c(set:grant_status), contract_value_band_see_note_a, 
-    cntry = country_of_birth_6, dept = dept_no_6, faculty = faculty_no_6,
-    grant_category_code, 
-    lang = home_language_6, tenure = no_of_years_in_uni_at_time_of_grant_6,
-    success_n = number_of_successful_grant_6, 
-    fail_n = number_of_unsuccessful_grant_6, person = person_id_6,
-    c(rfcd_code_1:rfcd_percentage_5), role = role_6, 
-    c(seo_code_1:start_date), phd = with_phd_6, born = year_of_birth_6
-  )
-d_unimelb_07 <- d_unimelb %>%
-  select(
-    c(set:grant_status), contract_value_band_see_note_a, 
-    cntry = country_of_birth_7, dept = dept_no_7, faculty = faculty_no_7,
-    grant_category_code, 
-    lang = home_language_7, tenure = no_of_years_in_uni_at_time_of_grant_7,
-    success_n = number_of_successful_grant_7, 
-    fail_n = number_of_unsuccessful_grant_7, person = person_id_7,
-    c(rfcd_code_1:rfcd_percentage_5), role = role_7, 
-    c(seo_code_1:start_date), phd = with_phd_7, born = year_of_birth_7
-  )
-d_unimelb_08 <- d_unimelb %>%
-  select(
-    c(set:grant_status), contract_value_band_see_note_a, 
-    cntry = country_of_birth_8, dept = dept_no_8, faculty = faculty_no_8,
-    grant_category_code, 
-    lang = home_language_8, tenure = no_of_years_in_uni_at_time_of_grant_8,
-    success_n = number_of_successful_grant_8, 
-    fail_n = number_of_unsuccessful_grant_8, person = person_id_8,
-    c(rfcd_code_1:rfcd_percentage_5), role = role_8, 
-    c(seo_code_1:start_date), phd = with_phd_8, born = year_of_birth_8
-  )
-d_unimelb_09 <- d_unimelb %>%
-  select(
-    c(set:grant_status), contract_value_band_see_note_a, 
-    cntry = country_of_birth_9, dept = dept_no_9, faculty = faculty_no_9,
-    grant_category_code, 
-    lang = home_language_9, tenure = no_of_years_in_uni_at_time_of_grant_9,
-    success_n = number_of_successful_grant_9, 
-    fail_n = number_of_unsuccessful_grant_9, person = person_id_9,
-    c(rfcd_code_1:rfcd_percentage_5), role = role_9, 
-    c(seo_code_1:start_date), phd = with_phd_9, born = year_of_birth_9
-  )
-d_unimelb_10 <- d_unimelb %>%
-  select(
-    c(set:grant_status), contract_value_band_see_note_a, 
-    cntry = country_of_birth_10, dept = dept_no_10, faculty = faculty_no_10,
-    grant_category_code, 
-    lang = home_language_10, tenure = no_of_years_in_uni_at_time_of_grant_10,
-    success_n = number_of_successful_grant_10, 
-    fail_n = number_of_unsuccessful_grant_10, person = person_id_10,
-    c(rfcd_code_1:rfcd_percentage_5), role = role_10, 
-    c(seo_code_1:start_date), phd = with_phd_10, born = year_of_birth_10
-  )
-d_unimelb_11 <- d_unimelb %>%
-  select(
-    c(set:grant_status), contract_value_band_see_note_a, 
-    cntry = country_of_birth_11, dept = dept_no_11, faculty = faculty_no_11,
-    grant_category_code, 
-    lang = home_language_11, tenure = no_of_years_in_uni_at_time_of_grant_11,
-    success_n = number_of_successful_grant_11, 
-    fail_n = number_of_unsuccessful_grant_11, person = person_id_11,
-    c(rfcd_code_1:rfcd_percentage_5), role = role_11, 
-    c(seo_code_1:start_date), phd = with_phd_11, born = year_of_birth_11
-  )
-d_unimelb_12 <- d_unimelb %>%
-  select(
-    c(set:grant_status), contract_value_band_see_note_a, 
-    cntry = country_of_birth_12, dept = dept_no_12, faculty = faculty_no_12,
-    grant_category_code, 
-    lang = home_language_12, tenure = no_of_years_in_uni_at_time_of_grant_12,
-    success_n = number_of_successful_grant_12, 
-    fail_n = number_of_unsuccessful_grant_12, person = person_id_12,
-    c(rfcd_code_1:rfcd_percentage_5), role = role_12, 
-    c(seo_code_1:start_date), phd = with_phd_12, born = year_of_birth_12
-  )
-d_unimelb_13 <- d_unimelb %>%
-  select(
-    c(set:grant_status), contract_value_band_see_note_a, 
-    cntry = country_of_birth_13, dept = dept_no_13, faculty = faculty_no_13,
-    grant_category_code, 
-    lang = home_language_13, tenure = no_of_years_in_uni_at_time_of_grant_13,
-    success_n = number_of_successful_grant_13, 
-    fail_n = number_of_unsuccessful_grant_13, person = person_id_13,
-    c(rfcd_code_1:rfcd_percentage_5), role = role_13, 
-    c(seo_code_1:start_date), phd = with_phd_13, born = year_of_birth_13
-  )
-d_unimelb_14 <- d_unimelb %>%
-  select(
-    c(set:grant_status), contract_value_band_see_note_a, 
-    cntry = country_of_birth_14, dept = dept_no_14, faculty = faculty_no_14,
-    grant_category_code, 
-    lang = home_language_14, tenure = no_of_years_in_uni_at_time_of_grant_14,
-    success_n = number_of_successful_grant_14, 
-    fail_n = number_of_unsuccessful_grant_14, person = person_id_14,
-    c(rfcd_code_1:rfcd_percentage_5), role = role_14, 
-    c(seo_code_1:start_date), phd = with_phd_14, born = year_of_birth_14
-  )
-d_unimelb_15 <- d_unimelb %>%
-  select(
-    c(set:grant_status), contract_value_band_see_note_a, 
-    cntry = country_of_birth_15, dept = dept_no_15, faculty = faculty_no_15,
-    grant_category_code, 
-    lang = home_language_15, tenure = no_of_years_in_uni_at_time_of_grant_15,
-    success_n = number_of_successful_grant_15, 
-    fail_n = number_of_unsuccessful_grant_15, person = person_id_15,
-    c(rfcd_code_1:rfcd_percentage_5), role = role_15, 
-    c(seo_code_1:start_date), phd = with_phd_15, born = year_of_birth_15
-  )
-d_unimelb_long <- bind_rows(
-  d_unimelb_01, d_unimelb_02, d_unimelb_03, d_unimelb_04, d_unimelb_05,
-  d_unimelb_06, d_unimelb_07, d_unimelb_08, d_unimelb_09, d_unimelb_10,
-  d_unimelb_11, d_unimelb_12, d_unimelb_13, d_unimelb_14, d_unimelb_15
-)
-rm (
-  d_unimelb_01, d_unimelb_02, d_unimelb_03, d_unimelb_04, d_unimelb_05,
-  d_unimelb_06, d_unimelb_07, d_unimelb_08, d_unimelb_09, d_unimelb_10,
-  d_unimelb_11, d_unimelb_12, d_unimelb_13, d_unimelb_14, d_unimelb_15
-)
-
-d_unimelb_long <- d_unimelb_long %>%
-  mutate(
-    start_date = lubridate::dmy(start_date),
-    role = case_when(role == "CHIEF_INVESTIGATOR" ~ "ci",
-                     role == "DELEGATED_RESEARCHER" ~ "dr",
-                     role == "EXT_CHIEF_INVESTIGATOR" ~ "eci",
-                     role == "EXTERNAL_ADVISOR" ~ "ea",
-                     role == "HONVISIT" ~ "hv",
-                     role == "PRINCIPAL_SUPERVISOR" ~ "ps",
-                     role == "STUD_CHIEF_INVESTIGATOR" ~ "sci",
-                     role == "STUDRES" ~ "sr",
-                     TRUE ~ as.character(NA))
-  )
-
-glimpse(d_unimelb_long)
+trim_cols <- function(dat) {
+  keepers <- unlist(lapply(dat, function(x) length(unique(x)) > 1))
+  trimmed <- dat[, keepers, drop = FALSE] %>% select_at(vars(-ends_with("NA")))
+  trimmed
+}
+pivot_role <- function(dat, col) {
+  dat$cnt_col <- unlist(dat[, col])
+  dat_2 <- dat %>% mutate(metric = paste0(Role, ".", cnt_col))
+  tab_df <- as.data.frame(table(dat_2$Grant.Application.ID, dat_2$metric)) 
+  names(tab_df) <- c("Grant.Application.ID", "Val", "Freq")
+  tab_wide <- tab_df %>% pivot_wider(names_from = Val, values_from = Freq)
+  tab_trimmed <- trim_cols(tab_wide)
+  tab_trimmed
+}
 ```
 
-## Create data frame with role "count" columns
 
-For each role attribute, create a pivoted data frame, one row per app, with cols for each attribute value.  Join them to create a single data frame with one row per app, with many, many attribute columns.
+```{r warning=FALSE}
+people <- d_raw_4 %>% count(Grant.Application.ID, name = "numPeople")
+
+investCount <- d_raw_4 %>% count(Grant.Application.ID, Role) %>%
+  pivot_wider(names_from = Role, values_from = n, values_fill = list(n = 0),
+              names_prefix = "Num")
+
+investDOB <- pivot_role(d_raw_4, "Year.of.Birth")
+
+investCountry <- pivot_role(d_raw_4, "Country.of.Birth")
+
+investLang <- pivot_role(d_raw_4, "Home.Language")
+
+investPhD <- pivot_role(d_raw_4, "With.PHD")
+
+investGrants_s <- d_raw_4 %>% 
+  group_by(Grant.Application.ID, Role) %>%
+  summarize(n = sum(Number.of.Successful.Grant, na.rm = TRUE)) %>%
+  ungroup() %>%
+  pivot_wider(
+    id_cols = Grant.Application.ID, names_from = Role, values_from = n, 
+    names_prefix = "Success.", values_fill = list(n = 0)) %>%
+  trim_cols()
+
+investGrants_u <- d_raw_4 %>% 
+  group_by(Grant.Application.ID, Role) %>%
+  summarize(n = sum(Number.of.Unsuccessful.Grant, na.rm = TRUE)) %>%
+  ungroup() %>%
+  pivot_wider(
+    id_cols = Grant.Application.ID, names_from = Role, values_from = n, 
+    names_prefix = "Unsuccess.", values_fill = list(n = 0)) %>%
+  trim_cols
+investGrants <- inner_join(investGrants_s, investGrants_u, 
+                           by = "Grant.Application.ID")
+rm(investGrants_s, investGrants_u)
+
+investDept <- pivot_role(d_raw_4, "Dept.No.")
+
+investFaculty <- pivot_role(d_raw_4, "Faculty.No.")
+
+investDuration <- d_raw_4 %>% 
+  count(Grant.Application.ID, No..of.Years.in.Uni.at.Time.of.Grant) %>%
+  ungroup() %>%
+  pivot_wider(
+    id_cols = Grant.Application.ID, 
+    names_from = No..of.Years.in.Uni.at.Time.of.Grant, values_from = n, 
+    values_fill = list(n = 0)) 
+
+totalPub = d_raw_4 %>%
+  group_by(Grant.Application.ID) %>%
+  summarize(
+    AstarTotal = sum(A., na.rm = TRUE),
+    ATotal = sum(A, na.rm = TRUE),
+    BTotal = sum(B, na.rm = TRUE),
+    CTotal = sum(C, na.rm = TRUE),
+    allPub = sum(c(A., A, B, C), na.rm = TRUE)
+  )
+  
+n_astar <- d_raw_4 %>% 
+  group_by(Grant.Application.ID, Role) %>%
+  summarize(x = sum(A., na.rm = TRUE)) %>%
+  pivot_wider(names_from = Role, values_from = x, values_fill = list(x = 0),
+              names_prefix = "Astar.") %>%
+  trim_cols()
+
+
+n_a <- d_raw_4 %>% 
+  group_by(Grant.Application.ID, Role) %>%
+  summarize(x = sum(A, na.rm = TRUE)) %>%
+  pivot_wider(names_from = Role, values_from = x, values_fill = list(x = 0),
+              names_prefix = "A.") %>%
+  trim_cols()
+
+n_b <- d_raw_4 %>% 
+  group_by(Grant.Application.ID, Role) %>%
+  summarize(x = sum(B, na.rm = TRUE)) %>%
+  pivot_wider(names_from = Role, values_from = x, values_fill = list(x = 0),
+              names_prefix = "B.") %>%
+  trim_cols()
+
+n_c <- d_raw_4 %>% 
+  group_by(Grant.Application.ID, Role) %>%
+  summarize(x = sum(C, na.rm = TRUE)) %>%
+  pivot_wider(names_from = Role, values_from = x, values_fill = list(x = 0),
+              names_prefix = "C.") %>%
+  trim_cols()
+
+investPub <- inner_join(n_astar, n_a, by = "Grant.Application.ID") %>%
+  inner_join(n_b, by = "Grant.Application.ID") %>%
+  inner_join(n_c, by = "Grant.Application.ID")
+rm(n_astar, n_a, n_b, n_c)
+
+RFCDcount <- d_raw_4 %>% 
+  count(Grant.Application.ID, RFCD.Code) %>%
+  pivot_wider(names_from = RFCD.Code, values_from = n, values_fill = list(n = 0)) %>%
+  trim_cols()
+
+SEOcount <- d_raw_4 %>% 
+  count(Grant.Application.ID, SEO.Code) %>%
+  pivot_wider(names_from = SEO.Code, values_from = n, values_fill = list(n = 0)) %>%
+  trim_cols()
+```
+
+
+## Create dummy vars
 
 ```{r}
-d_unimelb_clean_1 <- d_unimelb %>% 
-  replace_na(list(a_1 = 0, a_2 = 0, a_3 = 0, a_4 = 0, a_5 = 0,
-                  a_6 = 0, a_7 = 0, a_8 = 0, a_9 = 0, a_10 = 0,
-                  a_11 = 0, a_12 = 0, a_13 = 0, a_14 = 0, a_15 = 0,
-                  a_1_2 = 0, a_2_2 = 0, a_3_2 = 0, a_4_2 = 0, a_5_2 = 0,
-                  a_6_2 = 0, a_7_2 = 0, a_8_2 = 0, a_9_2 = 0, a_10_2 = 0,
-                  a_11_2 = 0, a_12_2 = 0, a_13_2 = 0, a_14_2 = 0, a_15_2 = 0,
-                  b_1 = 0, b_2 = 0, b_3 = 0, b_4 = 0, b_5 = 0,
-                  b_6 = 0, b_7 = 0, b_8 = 0, b_9 = 0, b_10 = 0,
-                  b_11 = 0, b_12 = 0, b_13 = 0, b_14 = 0, b_15 = 0,
-                  c_1 = 0, c_2 = 0, c_3 = 0, c_4 = 0, c_5 = 0,
-                  c_6 = 0, c_7 = 0, c_8 = 0, c_9 = 0, c_10 = 0,
-                  c_11 = 0, c_12 = 0, c_13 = 0, c_14 = 0, c_15 = 0)) %>%
+grantData <- d_raw_2 %>%
   mutate(
-    pubs_a1 = a_1 + a_2 + a_3 + a_4 + a_5 + a_6 + a_7 + a_8 + a_9 + a_10 +
-      a_11 + a_12 + a_13 + a_14 + a_15,
-    pubs_a2 = a_1_2 + a_2_2 + a_3_2 + a_4_2 + a_5_2 + a_6_2 + a_7_2 + a_8_2 + 
-      a_9_2 + a_10_2 +a_11_2 + a_12_2 + a_13_2 + a_14_2 + a_15_2,
-    pubs_b = b_1 + b_2 + b_3 + b_4 + b_5 + b_6 + b_7 + b_8 + b_9 + b_10 +
-      b_11 + b_12 + b_13 + b_14 + b_15,
-    pubs_c = c_1 + c_2 + c_3 + c_4 + c_5 + c_6 + c_7 + c_8 + c_9 + c_10 +
-      c_11 + c_12 + c_13 + c_14 + c_15
+    Month = factor(as.character(month(Start.date, label = TRUE))),
+    Weekday = factor(as.character(wday(Start.date, label = TRUE))),
+    Day = day(Start.date)
   ) %>%
-  select(
-    set, grant_application_id, grant_status, 
-    pubs_a1, pubs_a2, pubs_b, pubs_c,
-    value_band = contract_value_band_see_note_a, category = grant_category_code,
-    c(rfcd_code_1:rfcd_percentage_5), c(seo_code_1:start_date)
-  ) 
-d_unimelb_clean_2 <- d_unimelb_long %>% 
-  mutate(n = 1) %>%
-  pivot_wider(
-    id_cols = c(set, grant_application_id), 
-    names_from = role, names_prefix = "role_", 
-    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0)
-  )
-d_unimelb_clean_3 <- d_unimelb_long %>% 
-  mutate(x = paste(role, lang, sep = "_"), n = 1) %>%
-  pivot_wider(
-    id_cols = c(set, grant_application_id), 
-    names_from = x, names_prefix = "lang_", 
-    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0)
-  )
-d_unimelb_clean_4 <- d_unimelb_long %>% 
-  mutate(cntry = str_replace_all(cntry, " ", "_"),
-         x = paste(role, cntry, sep = "_"), n = 1) %>%
-  pivot_wider(
-    id_cols = c(set, grant_application_id), 
-    names_from = x, names_prefix = "cntry_", 
-    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0)
-  )
-d_unimelb_clean_5 <- d_unimelb_long %>% 
-  mutate(x = paste(role, phd, sep = "_"), n = 1) %>%
-  pivot_wider(
-    id_cols = c(set, grant_application_id), 
-    names_from = x, names_prefix = "phd_", 
-    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0)
-  )
-d_unimelb_clean_6 <- d_unimelb_long %>% 
-  mutate(x = paste(role, born, sep = "_"), n = 1) %>%
-  pivot_wider(
-    id_cols = c(set, grant_application_id), 
-    names_from = x, names_prefix = "born_", 
-    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0)
-  )
-d_unimelb_clean_7 <- d_unimelb_long %>% 
-  mutate(x = paste(role, dept, sep = "_"), n = 1) %>%
-  pivot_wider(
-    id_cols = c(set, grant_application_id), 
-    names_from = x, names_prefix = "dept_", 
-    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0)
-  )
-d_unimelb_clean_8 <- d_unimelb_long %>% 
-  mutate(x = paste(role, faculty, sep = "_"), n = 1) %>%
-  pivot_wider(
-    id_cols = c(set, grant_application_id), 
-    names_from = x, names_prefix = "faculty_", 
-    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0)
-  )
-d_unimelb_clean_9 <- d_unimelb_long %>% 
-  mutate(tenure = str_replace_all(tenure, " ", "_"),
-         tenure = str_replace_all(tenure, ">=", "gte"),
-         tenure = str_replace_all(tenure, ">", "gt"),
-         x = paste(role, tenure, sep = "_"), n = 1) %>%
-  pivot_wider(
-    id_cols = c(set, grant_application_id), 
-    names_from = x, names_prefix = "tenure_", 
-    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0)
-  )
-d_unimelb_clean_10 <- d_unimelb_long %>% 
-  pivot_wider(
-    id_cols = c(set, grant_application_id), 
-    names_from = role, names_prefix = "success_", 
-    values_from = success_n, values_fn = list(success_n = sum), 
-    values_fill = list(success_n = 0)
-  )
-d_unimelb_clean_11 <- d_unimelb_long %>% 
-  pivot_wider(
-    id_cols = c(set, grant_application_id), 
-    names_from = role, names_prefix = "fail_", 
-    values_from = fail_n, values_fn = list(fail_n = sum), 
-    values_fill = list(fail_n = 0)
-  )
+  select(Sponsor.Code, Contract.Value.Band...see.note.A, 
+         Grant.Category.Code, Month:Day)
 
-d_unimelb_clean <- d_unimelb_clean_1 %>%
-  inner_join(d_unimelb_clean_2, by = c("set", "grant_application_id")) %>%
-  inner_join(d_unimelb_clean_3, by = c("set", "grant_application_id")) %>%
-  inner_join(d_unimelb_clean_4, by = c("set", "grant_application_id")) %>%
-  inner_join(d_unimelb_clean_5, by = c("set", "grant_application_id")) %>%
-  inner_join(d_unimelb_clean_6, by = c("set", "grant_application_id")) %>%
-  inner_join(d_unimelb_clean_7, by = c("set", "grant_application_id")) %>%
-  inner_join(d_unimelb_clean_8, by = c("set", "grant_application_id")) %>%
-  inner_join(d_unimelb_clean_9, by = c("set", "grant_application_id")) %>%
-  inner_join(d_unimelb_clean_10, by = c("set", "grant_application_id")) %>%
-  inner_join(d_unimelb_clean_11, by = c("set", "grant_application_id"))
+dummies <- dummyVars(~., data = grantData, levelsOnly = TRUE)
+grantData <- as.data.frame(predict(dummies, grantData))
 
-rm(
-  d_unimelb_clean_1, d_unimelb_clean_2, d_unimelb_clean_3, d_unimelb_clean_4,
-  d_unimelb_clean_5, d_unimelb_clean_6, d_unimelb_clean_7, d_unimelb_clean_8,
-  d_unimelb_clean_9, d_unimelb_clean_10, d_unimelb_clean_11
-)
+grantData$Grant.Application.ID <- d_raw_2$Grant.Application.ID
+grantData$Class <- factor(ifelse(d_raw_2$Grant.Status, "successful", "unsuccessful"))
+grantData$is2008 <- year(d_raw_2$Start.date) == 2008
 
-rm(d_unimelb_long)
+grantData <- trim_cols(grantData)
+```
 
-glimpse(d_unimelb_clean)
+## Merge counts and dummies
+
+```{r}
+d_raw_5 <- merge(investCount, investDOB)
+d_raw_5 <- merge(d_raw_5, investCountry)
+d_raw_5 <- merge(d_raw_5, investLang)
+d_raw_5 <- merge(d_raw_5, investPhD)
+d_raw_5 <- merge(d_raw_5, investGrants)
+d_raw_5 <- merge(d_raw_5, investDept)
+d_raw_5 <- merge(d_raw_5, investFaculty)
+d_raw_5 <- merge(d_raw_5, investDuration)
+d_raw_5 <- merge(d_raw_5, investPub)
+d_raw_5 <- merge(d_raw_5, totalPub)
+d_raw_5 <- merge(d_raw_5, people)
+d_raw_5 <- merge(d_raw_5, RFCDcount)
+d_raw_5 <- merge(d_raw_5, SEOcount)
+d_raw_5 <- merge(d_raw_5, grantData)
+d_raw_5$Grant.Application.ID <- NULL
+rm(investCount, investDOB, investCountry, investLang, investPhD, investGrants,
+   investDept, investFaculty, investDuration, investPub, totalPub, people,
+   RFCDcount, SEOcount, grantData, dummies)
 ```
 
 
-## Create data frame with code "count" columns
+# Create Test and Train
 
-Repeat the process from before, but this time for the 5 RFCD codes and 5 SEO codes.  Count the number of codes with percent>0.
+Assign all pre-2008 observations, and a random subset of 2008 observations to `training`, and the remainder to `testing`.
 
 ```{r}
-d_unimelb_1 <- d_unimelb %>%
-  select(set, grant_application_id, 
-         rfcd_code = rfcd_code_1, rfcd_pct = rfcd_percentage_1,
-         seo_code = seo_code_1, seo_pct = seo_percentage_1)
-d_unimelb_2 <- d_unimelb %>%
-  select(set, grant_application_id, 
-         rfcd_code = rfcd_code_2, rfcd_pct = rfcd_percentage_2,
-         seo_code = seo_code_2, seo_pct = seo_percentage_2)
-d_unimelb_3 <- d_unimelb %>%
-  select(set, grant_application_id, 
-         rfcd_code = rfcd_code_3, rfcd_pct = rfcd_percentage_3,
-         seo_code = seo_code_3, seo_pct = seo_percentage_3)
-d_unimelb_4 <- d_unimelb %>%
-  select(set, grant_application_id, 
-         rfcd_code = rfcd_code_4, rfcd_pct = rfcd_percentage_4,
-         seo_code = seo_code_4, seo_pct = seo_percentage_4)
-d_unimelb_5 <- d_unimelb %>%
-  select(set, grant_application_id, 
-         rfcd_code = rfcd_code_5, rfcd_pct = rfcd_percentage_5,
-         seo_code = seo_code_5, seo_pct = seo_percentage_5)
-d_unimelb_long <- bind_rows(
-  d_unimelb_1, d_unimelb_2, d_unimelb_3, d_unimelb_4, d_unimelb_5
-)
+pre2008 <- subset(d_raw_5, !is2008)
+year2008 <- subset(d_raw_5, is2008)
 
-rm(d_unimelb_1, d_unimelb_2, d_unimelb_3, d_unimelb_4, d_unimelb_5)
+set.seed(568)
+inTrain <- createDataPartition(year2008$Class, p = 3/4)[[1]]
+year2008_train <- year2008[ inTrain,]
+testing   <- year2008[-inTrain,]
+training <- rbind(pre2008, year2008_train)
 
-d_unimelb_rfcd <- d_unimelb_long %>%
-  mutate(n = if_else(rfcd_pct > 0, 1, 0)) %>%
-  pivot_wider(
-    id_cols = c(set, grant_application_id),
-    names_from = rfcd_code, names_prefix = "rfcd_",
-    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0))
-d_unimelb_seo <- d_unimelb_long %>%
-  mutate(n = if_else(seo_pct > 0, 1, 0)) %>%
-  pivot_wider(
-    id_cols = c(set, grant_application_id),
-    names_from = seo_code, names_prefix = "seo_",
-    values_from = n, values_fn = list(n = sum), values_fill = list(n = 0))
-d_unimelb_clean <- d_unimelb_clean %>%
-  inner_join(d_unimelb_rfcd, by = c("set", "grant_application_id")) %>%
-  inner_join(d_unimelb_seo, by = c("set", "grant_application_id")) %>%
-  select(-c(rfcd_code_1:seo_percentage_5))
+training$is2008 <- NULL
+testing$is2008 <- NULL
 
-rm(d_unimelb_rfcd, d_unimelb_seo, d_unimelb_long)
+training <- trim_cols(training)
+testing <- testing[, names(training)]
 
-glimpse(d_unimelb_clean)
+rm(pre2008, year2008, year2008_train, inTrain)
+```
+
+Create two character predictor set vectors, one with all the predictors less the highly correlated predictors (`fullSet`), and one that additionally removes the sparse predictors (`reducedSet`).  
+
+```{r}
+all_preds <- names(training)[names(training) != "Class"]
+
+all_cor <- cor(training[, all_preds])
+high_cor_preds <- findCorrelation(all_cor, .99)
+low_cor_preds <- all_preds[-high_cor_preds]
+
+problematic_preds <- nearZeroVar(
+  training[, low_cor_preds], 
+  saveMetrics = TRUE, 
+  freqCut = floor(nrow(training)/5))
+
+fullSet <- rownames(subset(problematic_preds, !nzv))
+
+reducedSet <- rownames(subset(problematic_preds, !nzv & 
+                                freqRatio < floor(nrow(training)/50)))
+
+### Perfectly collinear predictors (due to construction). March
+### and Sunday have the lowest frequencies for mo/day.
+reducedSet <- reducedSet[(reducedSet != "allPub") &
+                         (reducedSet != "numPeople") &
+                         (reducedSet != "Mar") &
+                         (reducedSet != "Sun")
+                         ]
+
+rm(all_preds, all_cor, high_cor_preds, low_cor_preds, problematic_preds)
+```
+
+The classification tree uses a different set of predictors with factor encodings of some of the predictors.
+
+```{r}
+factorPredictors <- names(training)[names(training) != "Class"]
+factorPredictors <- factorPredictors[!grepl("Sponsor[0-9]", factorPredictors)]
+factorPredictors <- factorPredictors[!grepl("SponsorUnk", factorPredictors)]
+factorPredictors <- factorPredictors[!grepl("ContractValueBand[A-Z]", factorPredictors)]
+factorPredictors <- factorPredictors[!grepl("GrantCat", factorPredictors)]
+factorPredictors <- factorPredictors[!(factorPredictors %in% levels(training$Month))]
+factorPredictors <- factorPredictors[!(factorPredictors %in% levels(training$Weekday))]
+
+factorForm <- paste("Class ~ ", paste(factorPredictors, collapse = "+"))
+factorForm <- as.formula(factorForm)
 ```
 
 
 # Save Work
 
 ```{r}
-d_unimelb <- d_unimelb_clean
-save(d_unimelb, file = "./grant_01.RDS")
+save(training, testing, fullSet, reducedSet, file = "./grant_01.RData")
 ```
 
