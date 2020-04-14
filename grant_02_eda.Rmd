@@ -25,6 +25,8 @@ A cursory, univariate review of the newly encoded data uncovers a few  interesti
 ```{r message=FALSE}
 library(tidyverse)
 library(caret)
+library(mfstylr)
+library(flextable)
 ```
 
 
@@ -32,8 +34,6 @@ library(caret)
 
 ```{r warning=FALSE, message=FALSE}
 load("./grant_01.RData")
-training <- training %>% select(Class, sort(colnames(training)))
-glimpse(training)
 ```
 
 
@@ -41,4 +41,91 @@ glimpse(training)
 
 What continuous variables are likely to be important predictors of the response variable?
 
+```{r cache=TRUE}
+cor_out <- training %>% 
+  mutate(Class = as.numeric(training$Class)) %>%
+  cor()
+cor_out_2 <- cor_out[, "Class"] %>% abs() %>% sort(decreasing = TRUE)
+cor_out_2[c(1:5)]
+```
 
+Two continuous predictors, the number of prior successful and unsuccessful grant applications by the chief investigator, were highly associated with grant application success.
+
+```{r echo=FALSE}
+training %>% 
+  pivot_longer(cols = c(Success.CI, Unsuccess.CI)) %>%
+  count(name, value, Class) %>% 
+  ungroup() %>%
+  group_by(name) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(x = value, y = pct, fill = Class)) +
+    geom_col(position = "stack") +
+    coord_cartesian(xlim=c(0, 15)) +
+    scale_fill_mf() +
+    theme_mf() +
+    theme(plot.caption = element_text(hjust = 0)) +
+    labs(
+      x = "Number of Prior Grants",
+      y = "Percent of Total",
+      title = "Top two continuous predictors associated with grant success",
+      caption = "Prior application outcomes by the chief investigator are most highly associated with application status.  Axis truncated at 15 grants.",
+      fill = ""
+    ) +
+    facet_wrap(~ name)
+```
+
+Three categorical predictors (Contract Value Band A, Sponsor Unknown, and January) had the highest univariate associations with grant application  success. The associations for these three predictors were not strong, but suggests grant applications with a large monetary value, an unknown sponsor, or a submission in January are associated with greater grant success.
+
+```{r echo=FALSE}
+write_tab <- function(x, group_var, tab_caption){
+  x %>%
+  group_by_(group_var) %>%
+  summarise(
+    Succ = sum(if_else(Class == "successful", 1, 0)),
+    Uns = sum(if_else(Class == "unsuccessful", 1, 0)),
+    N = Succ + Uns,
+    Pct = Succ / N,
+    Odds = Pct / (1 - Pct) 
+  ) %>%
+  ungroup() %>%
+  mutate(or = Odds / lead(Odds, n = 1)) %>%
+  flextable() %>% colformat_int(j = c(2, 3, 4)) %>% colformat_num(j = c(5:7)) %>%
+  flextable::set_caption(tab_caption)
+}
+
+training %>% mutate(Band = if_else(ContractValueBandA > 0, "A", "Other")) %>%
+  write_tab("Band", "Three categorical predictors with highest association with application status: \nContract Value Band")  
+
+training %>% mutate(Sponsor = if_else(SponsorUnk > 0, "Unk", "Known")) %>%
+  write_tab("Sponsor", "Sponsor")  
+
+training %>% mutate(Month = if_else(Jan == 1, "Jan", "Oth")) %>%
+  write_tab("Month", "Month")
+
+rm(write_tab)
+```
+
+The percentage of successful grants varied over the years: 45% (2005), 51.7% (2006),  47.2% (2007), and 36.6% (2008). Although 2008 had the lowest percentage, there is not necesarily a downward trend. 
+
+```{r}
+d_raw_2 %>%
+  mutate(Start.date.year = lubridate::year(Start.date)) %>%
+  count(Start.date.year, Grant.Status) %>%
+  ungroup() %>%
+  group_by(Start.date.year) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(x = Start.date.year, 
+             y = pct, 
+             fill = factor(Grant.Status, labels = c("Unsuccessful", "Successful")),
+             label = scales::percent(pct)
+             )) +
+  geom_col() +
+  geom_text(position = position_stack(vjust = 0.9)) +
+  theme_mf() +
+  theme(axis.text.y = element_blank()) +
+  scale_fill_manual(values = c("#814E4A", "#334F67")) +
+  labs(title = "Grant Success", fill = "", x = "", y = ""
+  )
+```
+
+The data splitting scheme should take into account that the purpose of the model is to quantify the likelihood of success for *new* grants, which is why the  competition used the most recent data for testing purposes.  

@@ -1297,14 +1297,16 @@ summary {
 <span id="cb13-13"><a href="#cb13-13"></a>d_raw_<span class="dv">5</span> &lt;-<span class="st"> </span><span class="kw">merge</span>(d_raw_<span class="dv">5</span>, SEOcount)</span>
 <span id="cb13-14"><a href="#cb13-14"></a>d_raw_<span class="dv">5</span> &lt;-<span class="st"> </span><span class="kw">merge</span>(d_raw_<span class="dv">5</span>, grantData)</span>
 <span id="cb13-15"><a href="#cb13-15"></a>d_raw_<span class="dv">5</span><span class="op">$</span>Grant.Application.ID &lt;-<span class="st"> </span><span class="ot">NULL</span></span>
-<span id="cb13-16"><a href="#cb13-16"></a><span class="kw">rm</span>(investCount, investDOB, investCountry, investLang, investPhD, investGrants,</span>
-<span id="cb13-17"><a href="#cb13-17"></a>   investDept, investFaculty, investDuration, investPub, totalPub, people,</span>
-<span id="cb13-18"><a href="#cb13-18"></a>   RFCDcount, SEOcount, grantData, dummies)</span></code></pre></div>
+<span id="cb13-16"><a href="#cb13-16"></a>d_raw_<span class="dv">5</span> &lt;-<span class="st"> </span>d_raw_<span class="dv">5</span> <span class="op">%&gt;%</span><span class="st"> </span><span class="kw">select</span>(Class, <span class="kw">sort</span>(<span class="kw">colnames</span>(d_raw_<span class="dv">5</span>)))</span>
+<span id="cb13-17"><a href="#cb13-17"></a></span>
+<span id="cb13-18"><a href="#cb13-18"></a><span class="kw">rm</span>(investCount, investDOB, investCountry, investLang, investPhD, investGrants,</span>
+<span id="cb13-19"><a href="#cb13-19"></a>   investDept, investFaculty, investDuration, investPub, totalPub, people,</span>
+<span id="cb13-20"><a href="#cb13-20"></a>   RFCDcount, SEOcount, grantData, dummies)</span></code></pre></div>
 </div>
 </div>
 <div id="create-test-and-train" class="section level1">
 <h1>Create Test and Train</h1>
-<p>Assign all pre-2008 observations, and a random subset of 2008 observations to <code>training</code>, and the remainder to <code>testing</code>.</p>
+<p>If the grant success rate were relatively constant over the years, a reasonable data splitting strategy would be to use all data from 2005 to 2008, reserving some data for a test set, and resampling the remainder for tuning the various models. However, the grant success rate was not constant (see EDA), so random test sample is less relevant. One alternative is to fit models to pre-2008 data, then tune them on 2008 data. Essentially, 2008 would serve as a single test. However, this strategy may lead to over-fitting. The compromise taken here is to build models on the pre-2008 data and tune them on a random sample of 2,075 grants from 2008. Once the optimal parameters are determined, fit the final model using these parameters to the entire training set (pre-2008 plus 2008 grants). A small holdout set of 518 grants from 2008 will be used as the test set to ensure no gross methodology errors occur from repeatedly evaluating the 2008 data during model tuning.</p>
 <div class="sourceCode" id="cb14"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1"></a>pre2008 &lt;-<span class="st"> </span><span class="kw">subset</span>(d_raw_<span class="dv">5</span>, <span class="op">!</span>is2008)</span>
 <span id="cb14-2"><a href="#cb14-2"></a>year2008 &lt;-<span class="st"> </span><span class="kw">subset</span>(d_raw_<span class="dv">5</span>, is2008)</span>
 <span id="cb14-3"><a href="#cb14-3"></a></span>
@@ -1320,7 +1322,7 @@ summary {
 <span id="cb14-13"><a href="#cb14-13"></a>training &lt;-<span class="st"> </span><span class="kw">trim_cols</span>(training)</span>
 <span id="cb14-14"><a href="#cb14-14"></a>testing &lt;-<span class="st"> </span>testing[, <span class="kw">names</span>(training)]</span>
 <span id="cb14-15"><a href="#cb14-15"></a></span>
-<span id="cb14-16"><a href="#cb14-16"></a><span class="kw">rm</span>(pre2008, year2008, year2008_train, inTrain)</span></code></pre></div>
+<span id="cb14-16"><a href="#cb14-16"></a><span class="kw">rm</span>(year2008_train, inTrain)</span></code></pre></div>
 <p>Create two character predictor set vectors, one with all the predictors less the highly correlated predictors (<code>fullSet</code>), and one that additionally removes the sparse predictors (<code>reducedSet</code>).</p>
 <div class="sourceCode" id="cb15"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1"></a>all_preds &lt;-<span class="st"> </span><span class="kw">names</span>(training)[<span class="kw">names</span>(training) <span class="op">!=</span><span class="st"> &quot;Class&quot;</span>]</span>
 <span id="cb15-2"><a href="#cb15-2"></a></span>
@@ -1361,7 +1363,8 @@ summary {
 </div>
 <div id="save-work" class="section level1">
 <h1>Save Work</h1>
-<div class="sourceCode" id="cb17"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1"></a><span class="kw">save</span>(training, testing, fullSet, reducedSet, <span class="dt">file =</span> <span class="st">&quot;./grant_01.RData&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb17"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1"></a><span class="kw">save</span>(d_raw_<span class="dv">2</span>, pre2008, year2008, training, testing, fullSet, reducedSet, </span>
+<span id="cb17-2"><a href="#cb17-2"></a>     <span class="dt">file =</span> <span class="st">&quot;./grant_01.RData&quot;</span>)</span></code></pre></div>
 </div>
 
 

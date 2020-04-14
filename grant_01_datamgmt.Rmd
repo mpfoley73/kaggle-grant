@@ -321,6 +321,8 @@ d_raw_5 <- merge(d_raw_5, RFCDcount)
 d_raw_5 <- merge(d_raw_5, SEOcount)
 d_raw_5 <- merge(d_raw_5, grantData)
 d_raw_5$Grant.Application.ID <- NULL
+d_raw_5 <- d_raw_5 %>% select(Class, sort(colnames(d_raw_5)))
+
 rm(investCount, investDOB, investCountry, investLang, investPhD, investGrants,
    investDept, investFaculty, investDuration, investPub, totalPub, people,
    RFCDcount, SEOcount, grantData, dummies)
@@ -329,7 +331,7 @@ rm(investCount, investDOB, investCountry, investLang, investPhD, investGrants,
 
 # Create Test and Train
 
-Assign all pre-2008 observations, and a random subset of 2008 observations to `training`, and the remainder to `testing`.
+If the grant success rate were relatively constant over the years, a reasonable data splitting strategy would be to use all data from 2005 to 2008, reserving some data for a test set, and resampling the remainder for tuning the various models.  However, the grant success rate was not constant (see EDA), so random test sample is less relevant.  One alternative is to fit models to pre-2008 data, then tune them on 2008 data. Essentially, 2008 would serve as a single test. However, this strategy may lead to over-fitting. The compromise taken here is to build models on the pre-2008 data and tune them on a random sample of 2,075 grants from 2008. Once the optimal parameters are determined, fit the final model using these parameters to the entire training set (pre-2008 plus 2008 grants). A small holdout set of 518 grants from 2008 will be used as the test set to ensure no gross methodology errors occur from repeatedly evaluating the 2008 data during model tuning.
 
 ```{r}
 pre2008 <- subset(d_raw_5, !is2008)
@@ -347,7 +349,7 @@ testing$is2008 <- NULL
 training <- trim_cols(training)
 testing <- testing[, names(training)]
 
-rm(pre2008, year2008, year2008_train, inTrain)
+rm(year2008_train, inTrain)
 ```
 
 Create two character predictor set vectors, one with all the predictors less the highly correlated predictors (`fullSet`), and one that additionally removes the sparse predictors (`reducedSet`).  
@@ -399,6 +401,7 @@ factorForm <- as.formula(factorForm)
 # Save Work
 
 ```{r}
-save(training, testing, fullSet, reducedSet, file = "./grant_01.RData")
+save(d_raw_2, pre2008, year2008, training, testing, fullSet, reducedSet, 
+     file = "./grant_01.RData")
 ```
 
