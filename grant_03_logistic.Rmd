@@ -1,0 +1,70 @@
+---
+title: "Kaggle - Grant Prediction"
+subtitle: "Step 3: Logistic Regression"
+author: "Michael Foley"
+date: "4/14/2020"
+output: 
+  html_document:
+    theme: flatly
+    toc: true
+    highlight: haddock
+    fig_width: 9
+    fig_caption: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+The logistic regression model is simple and can be used for inference.  The model produced in this section had an overall accuracy of 76.4%, a sensitivity of 77%, specificity  of 76.1%, and AUC of 0.87.
+
+# Setup
+
+```{r message=FALSE}
+library(tidyverse)
+library(caret)
+library(mfstylr)
+library(flextable)
+```
+
+```{r warning=FALSE, message=FALSE}
+load("./grant_01.RData")
+```
+
+
+# Background
+
+
+Logistic regression estimates the probability of a particular level of a categorical response variable given a set of predictors. The response levels can be binary, nominal (multiple categories), or ordinal (multiple levels).  
+
+The **binary** logistic regression model is
+
+$$y = logit(\pi) = \ln \left( \frac{\pi}{1 - \pi} \right) = X \beta$$
+
+where $\pi$ is the event probability. The model predicts the *log odds* of the response variable.  The maximum likelihood estimator maximizes the likelihood function
+
+$$L(\beta; y, X) = \prod_{i=1}^n \pi_i^{y_i}(1 - \pi_i)^{(1-y_i)} = \prod_{i=1}^n\frac{\exp(y_i X_i \beta)}{1 + \exp(X_i \beta)}.$$
+
+There is no closed-form solution, so GLM estimates coefficients with interatively reweighted least squares.  
+
+# Model
+
+## Train Control
+
+`train` will tune the model based on the AUC.  To construct the ROC curve, train should produce class probabilities rather than class predictions.  Set `classProbs = TRUE` to get probabilities.  Summary function `twoClassSummary` calculates the  area under the ROC curve, the sensitivity, and the specificity.
+
+The data splitting scheme is to build the model on the pre-2008 data, then with the 2008 holdout data, both of which are in the `training` data set, indexed by vector `pre2008` (in the training set) to tune the model.
+
+`savePredictions = TRUE` saves the predictions of the year 2008 grants based on the pre-2008 model (i.e., before the final model is re-fit with all of the training data).
+
+```{r}
+ctrl <- trainControl(
+  method = "LGOCV",  
+  summaryFunction = twoClassSummary,  
+  classProbs = TRUE,
+  index = list(TrainSet = pre2008),  
+  savePredictions = TRUE
+) 
+```
+

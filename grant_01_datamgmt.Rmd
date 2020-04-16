@@ -17,9 +17,20 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
-This is an analysis of the *Grant Status* dataset for the Kaggle competition [Predict Grant Applications](https://www.kaggle.com/c/unimelb).  Kaggle's Grant Applications competition challenges participants to predict the success (1 = successful, 0 = unsuccessful) of 2,176 grant applications submitted by the University of Melbourne between 2009 and 2010.  The training and test datasets include 249 features. The training dataset contains 8,707 observations from applications made between 2005 and 2008.  Competitors build a predictive model with the training dataset, then apply the model to the test dataset to produce a submission file consisting of the observation id and the predicted probability of application success.  Kaggle evaluates submissions based on the area under the ROC curve (AUC).
+This is an analysis of the *Grant Status* dataset for the Kaggle competition [Predict Grant Applications](https://www.kaggle.com/c/unimelb).  Kaggle's Grant Applications competition challenges participants to predict the success (1 = successful, 0 = unsuccessful) of 2,176 grant applications submitted by the University of Melbourne between 2009 and 2010.  The training and test datasets include 249 features. The training dataset contains 8,708 observations from applications made between 2005 and 2008.  Competitors build a predictive model with the training dataset, then apply the model to the test dataset to produce a submission file consisting of the observation id and the predicted probability of application success.  Kaggle evaluates submissions based on the area under the ROC curve (AUC).
 
-This document addresses initial data management.
+This document addresses initial data management.  It follows the logic used in Kuhn's Applied Predictive Modeling.  (See `AppliedPredictiveModeling::scriptLocation()`.)
+
+
+# Overview
+
+Each row contains the outcome (`Grant.Status`) of a grant application (`Grant.Application.ID`), the application date (`Start.date`), several descriptive codes (`Sponsor.Code`, `Grant.Category.Code`, `Contract.Value.Band...see.note.A`, 5 `RFCD.Code.#` and proportions, and 5 `SEO.Code.#` and proportions), and 15 sets of attributes for persons on the application.  Those attributes include an identifier (`Person.ID.#`), role (`Role.#`) and 13 more fields.
+
+This script pivots the 15 sets of persons on the application into additional rows in the dataset, then pivots each coded attribute into count predictors.  Most of the predictors are binary. There are 730 `RFCD______` dummies, 454 `SEO_____` dummies, 292 `Sponsor___` dummies, 17 `ContractValueBand_` dummies, 11 `mmm` application month dummies, and 6 `ddd` application day of week dummies.  There are frequency variables counting the number of persons per role `num__`, and [role].[attribute] counts such as `CI.1925` for chief investigators born between 1925 and 1930.  The publication information is represented in two ways, first, as totals for each role, such as `B.CI`, and second as total counts across all individuals, such as `AstarTotal` or all journal  types (`allPub`).  The calendar day of the year is stored as a numeric variable (`Day`). The class outcome is contained in a factor variable `Class` with levels `successful` and `unsuccessful`. 
+
+The script splits the data into two data frames: `training` contains the 6,633 pre-2008 observations plus a holdout set of 1,557 observations from 2008 used to tune the model for a total of 8,190 observations; `testing` contains the remaining 518 observations from 2008.  Total rows = 8,190 + 518 = 8,708.  A vector `pre2008` contains the row indices of the 6,633 pre-2008 observations.
+
+The full set of predictors, identified by name in vector `fullSet`, include variables with zero variance or high ($\rho$ >0.99) correlation to other variables.  A reduced set of variables, identified by name in vector `reducedSet` removes the zero varaiance and highly correlated variables.
 
 
 # Setup
@@ -331,17 +342,19 @@ rm(investCount, investDOB, investCountry, investLang, investPhD, investGrants,
 
 # Create Test and Train
 
+## Split the data
+
 If the grant success rate were relatively constant over the years, a reasonable data splitting strategy would be to use all data from 2005 to 2008, reserving some data for a test set, and resampling the remainder for tuning the various models.  However, the grant success rate was not constant (see EDA), so random test sample is less relevant.  One alternative is to fit models to pre-2008 data, then tune them on 2008 data. Essentially, 2008 would serve as a single test. However, this strategy may lead to over-fitting. The compromise taken here is to build models on the pre-2008 data and tune them on a random sample of 2,075 grants from 2008. Once the optimal parameters are determined, fit the final model using these parameters to the entire training set (pre-2008 plus 2008 grants). A small holdout set of 518 grants from 2008 will be used as the test set to ensure no gross methodology errors occur from repeatedly evaluating the 2008 data during model tuning.
 
 ```{r}
-pre2008 <- subset(d_raw_5, !is2008)
+dat_pre2008 <- subset(d_raw_5, !is2008)
+pre2008 <- 1:nrow(dat_pre2008)
 year2008 <- subset(d_raw_5, is2008)
 
 set.seed(568)
 inTrain <- createDataPartition(year2008$Class, p = 3/4)[[1]]
-year2008_train <- year2008[ inTrain,]
-testing   <- year2008[-inTrain,]
-training <- rbind(pre2008, year2008_train)
+training <- rbind(dat_pre2008, year2008[inTrain, ])
+testing   <- year2008[-inTrain, ]
 
 training$is2008 <- NULL
 testing$is2008 <- NULL
@@ -349,27 +362,34 @@ testing$is2008 <- NULL
 training <- trim_cols(training)
 testing <- testing[, names(training)]
 
-rm(year2008_train, inTrain)
+rm(inTrain)
 ```
 
-Create two character predictor set vectors, one with all the predictors less the highly correlated predictors (`fullSet`), and one that additionally removes the sparse predictors (`reducedSet`).  
+
+## Identify problematic predictors
+
+Create two character predictor set vectors, one with all the predictors less the highly correlated predictors (`fullSet`), and one that additionally removes the sparse predictors (`reducedSet`). 
+
+`training` has 1,892 variables. First, pull out the 63 highly correlated ($\rho$ >= 0.99) predictors.  `low_cor` is a list of 1,828 predictors with ($\rho$ < 0.99).
 
 ```{r}
 all_preds <- names(training)[names(training) != "Class"]
-
 all_cor <- cor(training[, all_preds])
-high_cor_preds <- findCorrelation(all_cor, .99)
-low_cor_preds <- all_preds[-high_cor_preds]
+high_cor <- findCorrelation(all_cor, .99)
+low_cor <- all_preds[-high_cor]
+rm(all_preds, all_cor, high_cor)
+length(low_cor)
+```
 
-problematic_preds <- nearZeroVar(
-  training[, low_cor_preds], 
-  saveMetrics = TRUE, 
-  freqCut = floor(nrow(training)/5))
+From these 1,828 predictors, pull out the 753 near-zero variance predictors. That leaves 1,828 - 753 = 1,075 predictors for `fullSet`.  From these 1,075 predictors, pull out the 819 predictors with a very high frequency ratio.  That leaves 256 predictors for `reducedSet`, but also remove the 4 variables that are redundant by construction (`allPub`, `numPeople`, `Mar`, and `Sun`), leaveing 252 predictors for `reducedSet`.
 
-fullSet <- rownames(subset(problematic_preds, !nzv))
+```{r}
+prob_preds <- nearZeroVar(training[, low_cor], saveMetrics = TRUE, 
+                          freqCut = floor(nrow(training)/5))
 
-reducedSet <- rownames(subset(problematic_preds, !nzv & 
-                                freqRatio < floor(nrow(training)/50)))
+fullSet <- rownames(subset(prob_preds, !nzv))
+
+reducedSet <- rownames(subset(prob_preds, !nzv & freqRatio < floor(nrow(training)/50)))
 
 ### Perfectly collinear predictors (due to construction). March
 ### and Sunday have the lowest frequencies for mo/day.
@@ -379,7 +399,19 @@ reducedSet <- reducedSet[(reducedSet != "allPub") &
                          (reducedSet != "Sun")
                          ]
 
-rm(all_preds, all_cor, high_cor_preds, low_cor_preds, problematic_preds)
+rm(low_cor, prob_preds)
+```
+
+Are we good?  The function `findLinearCombos` uses the QR decomposition of a matrix to enumerate sets of linear combinations (if they exist).  Here it is for the full set of predictors.
+
+```{r}
+colnames(training[, findLinearCombos(training[, fullSet])$remove])
+```
+
+And here it is for the reduced set of predictors.
+
+```{r}
+colnames(training[, findLinearCombos(training[, reducedSet])$remove])
 ```
 
 The classification tree uses a different set of predictors with factor encodings of some of the predictors.
