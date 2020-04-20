@@ -48,15 +48,14 @@ $$L(\beta; y, X) = \prod_{i=1}^n \pi_i^{y_i}(1 - \pi_i)^{(1-y_i)} = \prod_{i=1}^
 
 There is no closed-form solution, so GLM estimates coefficients with interatively reweighted least squares.  
 
+
 # Model
 
 ## Train Control
 
-`train` will tune the model based on the AUC.  To construct the ROC curve, train should produce class probabilities rather than class predictions.  Set `classProbs = TRUE` to get probabilities.  Summary function `twoClassSummary` calculates the  area under the ROC curve, the sensitivity, and the specificity.
+`train()` will tune the model based on the AUC.  To construct the ROC curve, set `classProbs = TRUE` to produce class probabilities rather than class predictions.  Summary function `twoClassSummary` calculates the  area under the ROC curve, the sensitivity, and the specificity.
 
-The data splitting scheme is to build the model on the pre-2008 data, then with the 2008 holdout data, both of which are in the `training` data set, indexed by vector `pre2008` (in the training set) to tune the model.
-
-`savePredictions = TRUE` saves the predictions of the year 2008 grants based on the pre-2008 model (i.e., before the final model is re-fit with all of the training data).
+The data splitting scheme is to fit the model on the pre-2008 data, and tune with the 2008 holdout data.  Both pre-2008 and the holdout are in `training`, indexed by vector `pre2008`.  This train and tune scheme is accomplished with `method = "LGOCV"` ("leave group out cross validation").  There are not parameters to tune in this model, so the holdout set is just for comparing the model perfpormance to other models.  `savePredictions = TRUE` saves the 2008 holdout data predictions.
 
 ```{r}
 ctrl <- trainControl(
@@ -68,3 +67,85 @@ ctrl <- trainControl(
 ) 
 ```
 
+
+## Models
+
+Fit the full-predictor-set model first.  `method = "glm"` fits a generalized linear model.  `metric = "ROC"` sets the summary metric to select the optimal model.  Again, there are no tuning parameters, so there is only one model produced, but the AUC can be compared to other models, including the reduced-parameter-set model.
+
+```{r}
+training$Day2 <- training$Day^2
+testing$Day2 <- testing$Day^2
+fullSet <- c(fullSet, "Day2")
+reducedSet <- c(reducedSet, "Day2")
+
+
+set.seed(476)
+lr_full <- train(
+  training[, fullSet],
+  y = training$Class,
+  method = "glm",
+  family = "binomial",
+  metric = "ROC",
+  trControl = ctrl
+) 
+lr_full
+```
+
+From the training set of 8,190 observations and 1075 predictor variables, caret trained the model on the indexed 6,633 pre-2008 observations. The  “Resampling Results” is the performance estimate of the 2008 holdout set. The model achieved an area under the ROC curve of 0.782, a sensitivity of 0.754 and a specificity of 0.761 on the 2008 holdout set. 
+
+Now fit the reduced-predictor-set model.
+
+```{r}
+set.seed(476)
+lr_reduced <- train(
+  training[, reducedSet],
+  y = training$Class,
+  method = "glm",
+  family = "binomial",
+  metric = "ROC",
+  trControl = ctrl
+) 
+lr_reduced
+summary(lr_reduced)["coefficients"] %>% data.frame()
+```
+
+Removing the near-zero variance predictors improved the model performance. For the reduced set of 253 variables, the area under the  ROC curve was 0.875, the sensitivity was 0.786, and the specificity was 0.831.  
+
+For logistic regression you can assess the slope coeficients with the Z statistic.  Kuhn describes it as a "signal to noise ratio", the estimated slope divided by the standard error.  The five most important predictors were the number of unsuccessful grants by chief investigators, the number of successful grants by chief investigators, contract value band F, contract value band E, and numeric day of the year (squared).
+
+```{r}
+varImp(lr_reduced, scale = FALSE)
+```
+
+
+The predictions for the holdout set (the year 2008 grants) is contained in the sub-object `pred`.
+
+```{r}
+head(lrReduced$pred) 
+```
+
+Note the column in the output labeled .parameter. When train saves predictions, it does so for every tuning parameter. This column in the output is  used to label which model generated the predictions. This version of logistic  regression has no tuning parameters, so .parameter has a single value ("none"). 
+
+Use this data to calculate the confusion matrix.
+
+```{r}
+confusionMatrix(data = lrReduced$pred$pred, reference = lrReduced$pred$obs)  
+```
+
+These results match the values shown above for lrReduced. The ROC curve  can also be computed and plotted using the pROC package:  
+
+```{r}
+library(pROC)
+reducedRoc <- roc(
+  response = lrReduced$pred$obs,
+  predictor = lrReduced$pred$successful,
+  levels = rev(levels(lrReduced$pred$obs))
+)
+plot(reducedRoc, legacy.axes = TRUE)
+auc(reducedRoc) 
+a <- roc(
+  response = training[-pre2008, "Class"],
+  predictor = 1 - predict(modelFit, training[-pre2008,], type = "response"),
+  levels = rev(levels(training[-pre2008, "Class"])))
+plot(a)
+```

@@ -1,0 +1,73 @@
+---
+title: "Kaggle - Grant Prediction"
+author: "Step 1b: Data Management - Validation"
+date: "4/17/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script run's Kuhn's `CreateGrantData.R` and compares the key output objects with my own script.  Run this file is separate session to keep the environment clean.
+
+# Setup
+
+```{r message=FALSE}
+library(tidyverse)
+```
+
+# Load My Data Objects
+
+```{r}
+load("./grant_01.RData")
+mpf_testing <- testing
+mpf_training <- training
+mpf_year2008 <- year2008
+mpf_fullSet <- fullSet
+mpf_pre2008 <- pre2008
+mpf_reducedSet <- reducedSet
+
+rm(testing, training, year2008, fullSet, pre2008, reducedSet)
+```
+
+# Create Kuhn's Objects
+
+```{r message=FALSE, warning=FALSE, results=FALSE}
+source(paste0(AppliedPredictiveModeling::scriptLocation(), "/CreateGrantData.R"))
+```
+
+# Compare
+
+```{r}
+library(assertthat)
+
+# I sorted data set cols alphabetically and placed Class at front
+kuhn_training <- training %>% select(Class, sort(colnames(training)))
+kuhn_testing <- testing %>% select(Class, sort(colnames(testing)))
+kuhn_year2008 <- year2008 %>% select(Class, sort(colnames(year2008)))
+kuhn_fullSet <- sort(fullSet)
+kuhn_reducedSet <- sort(reducedSet)
+
+assertthat::are_equal(mpf_training, kuhn_training)  # good
+assertthat::are_equal(mpf_testing, kuhn_testing)  # good
+assertthat::are_equal(mpf_year2008, kuhn_year2008) # good
+
+assertthat::are_equal(mpf_fullSet, kuhn_fullSet)
+# doesn't match!
+setdiff(mpf_fullSet, kuhn_fullSet)
+# My fullSet includes "Sponsor21A" "SponsorUnk"...
+setdiff(kuhn_fullSet, mpf_fullSet)
+# ...while Kuhn's fullSet includes "GrantCat50A" "GrantCatUnk"
+
+assertthat::are_equal(mpf_pre2008, pre2008)  #good
+
+assertthat::are_equal(mpf_reducedSet, kuhn_reducedSet)
+# doesn't match!
+setdiff(mpf_reducedSet, kuhn_reducedSet)
+# My reducedSet includes "Sponsor21A" "SponsorUnk"...
+setdiff(kuhn_reducedSet, mpf_reducedSet)
+# ...while Kuhn's fullSet includes "GrantCat50A" "GrantCatUnk"
+
+```
+
