@@ -40,3 +40,5 @@ vignettes/*.pdf
 *.Rdata
 *.dcf
 *.png
+12_Discriminant_Analysis.R
+CreateGrantData.R
