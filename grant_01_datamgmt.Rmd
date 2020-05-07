@@ -299,7 +299,7 @@ grantData <- d_raw_2 %>%
   mutate(
     Month = factor(as.character(month(Start.date, label = TRUE))),
     Weekday = factor(as.character(wday(Start.date, label = TRUE))),
-    Day = day(Start.date)
+    Day = yday(Start.date)
   ) %>%
   select(Sponsor.Code, Contract.Value.Band...see.note.A, 
          Grant.Category.Code, Month:Day)

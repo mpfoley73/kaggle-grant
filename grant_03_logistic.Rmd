@@ -17,7 +17,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
-The logistic regression model is simple and can be used for inference.  The model produced in this section had an overall accuracy of 76.4%, a sensitivity of 77%, specificity  of 76.1%, and AUC of 0.87.
+The logistic regression model is simple and can be used for inference.  The model produced in this section had an overall accuracy of 0.817, a sensitivity of 0.753, specificity of 0.854, and AUC of 0.882.
 
 # Setup
 
@@ -49,13 +49,104 @@ $$L(\beta; y, X) = \prod_{i=1}^n \pi_i^{y_i}(1 - \pi_i)^{(1-y_i)} = \prod_{i=1}^
 There is no closed-form solution, so GLM estimates coefficients with interatively reweighted least squares.  
 
 
+# Feature Engineering
+
+Logistic regression is a linear regression model, meaning it models a linear relationship with the predictors.  When the underlying relationship is not linear, you can often transform the predictor to create one. One method for doing this uses restricted cubic splines to create flexible, adaptive versions of the predictors.  More information on splines [here](https://towardsdatascience.com/non-linear-regression-basis-expansion-polynomials-splines-2d7adb2cc226).
+
+The Grants data set has 24 continuous variables. (By "continuous", I mean numeric with several different values, and I decided "several" should mean "at least 7".)
+
+```{r}
+continuous_vars <- training[pre2008, reducedSet] %>%
+  map(n_distinct) %>%
+  unlist() %>%
+  subset(. >= 7) %>%
+  names()
+continuous_vars
+```
+
+The `rms::lrm()` function with helper function `rms::rcs()` fits a restricted cubic spline.  14 predictors returned significant (p < .05) for higher degree polynomials.
+
+```{r warning=FALSE, message=FALSE}
+xforms <- data.frame(feature = continuous_vars) %>%
+  mutate(
+    lrm_formula = map(feature, ~ as.formula(paste0("Class ~ rms::rcs(", ., ")"))),
+    lrm_obj = map(lrm_formula, 
+                  possibly(~ rms::lrm(., data = training[pre2008, ]),
+                           otherwise = NULL)),
+    x = map(
+      lrm_obj, 
+      ~ tibble(est = .$coefficients[-1], 
+               se = sqrt(diag(.$var)[-1])) %>% 
+        rownames_to_column(var = "degree")
+      )
+    ) %>%
+  unnest(x) %>%
+  mutate(
+    z = est / se,
+    p = pnorm(abs(z), lower.tail = FALSE) * 2
+  )  %>% 
+  filter(p < .05 & degree > "1")
+
+# xforms %>% mutate(val = "y") %>%
+#   pivot_wider(id_cols = feature, names_from = degree, values_from = val) 
+
+xforms %>% select(-lrm_formula, -lrm_obj)
+```
+
+Add these transforms to the `training` data set and call it `training2`.
+
+```{r}
+new_cols <- xforms %>%
+  mutate(
+    new_col_name = paste0(feature, degree),
+    dat = map(feature, ~ training[, colnames(training) == .]),
+    new_col_vals = map2(.x = dat, .y = degree, ~ .x^as.numeric(.y))
+  )
+
+new_cols2 <- new_cols %>%
+  pivot_wider(id_cols = new_col_name, names_from = new_col_name, values_from = new_col_vals)
+
+training2 <- training
+for(col_name in colnames(new_cols2)) {
+  x <- data.frame(new_cols2[[col_name]][[1]])
+  colnames(x) <- col_name
+  training2 <- bind_cols(training2, x)
+}
+reducedSet2 <- c(reducedSet, colnames(new_cols2))
+```
+
+Here is a log-odds plot of one of the predictors, `Day` with the predicted values from the restricted cubic spline model.
+
+```{r}
+preds <- rms::Predict(
+  xforms[xforms$feature == "Day", ]$lrm_obj[[1]],
+  Day = unique(training$Day),
+  fun = function(x) -x
+) 
+obs <- prop.table(table(training$Day, training$Class), margin = 1) %>%
+  as.data.frame.matrix() %>% rownames_to_column(var = "Day") %>%
+  mutate(
+    Day = as.numeric(Day),
+    odds = successful / unsuccessful,
+    log_odds = log(odds)
+  )
+dat <- obs %>% inner_join(preds, by = "Day")
+dat %>% 
+  ggplot(aes(x = Day)) +
+  geom_point(aes(y = log_odds), alpha = 0.6) +
+  geom_line(aes(y = yhat)) +
+  theme_mf() +
+  labs(title = "Log-Odds of Class with fitted Restricted Cubic Spline")
+```
+
+
 # Model
 
 ## Train Control
 
 `train()` will tune the model based on the AUC.  To construct the ROC curve, set `classProbs = TRUE` to produce class probabilities rather than class predictions.  Summary function `twoClassSummary` calculates the  area under the ROC curve, the sensitivity, and the specificity.
 
-The data splitting scheme is to fit the model on the pre-2008 data, and tune with the 2008 holdout data.  Both pre-2008 and the holdout are in `training`, indexed by vector `pre2008`.  This train and tune scheme is accomplished with `method = "LGOCV"` ("leave group out cross validation").  There are not parameters to tune in this model, so the holdout set is just for comparing the model perfpormance to other models.  `savePredictions = TRUE` saves the 2008 holdout data predictions.
+The data splitting scheme defined in step 01 is to fit the model on the pre-2008 data, and tune with the 2008 holdout data.  Both pre-2008 and the holdout are in `training`, indexed by vector `pre2008`.  This train and tune scheme is accomplished with `method = "LGOCV"` ("leave group out cross validation").  There are no parameters to tune in this model, so the holdout set is just for comparing the model perfpormance to other models.  `savePredictions = TRUE` saves the 2008 holdout data predictions.
 
 ```{r}
 ctrl <- trainControl(
@@ -72,80 +163,117 @@ ctrl <- trainControl(
 
 Fit the full-predictor-set model first.  `method = "glm"` fits a generalized linear model.  `metric = "ROC"` sets the summary metric to select the optimal model.  Again, there are no tuning parameters, so there is only one model produced, but the AUC can be compared to other models, including the reduced-parameter-set model.
 
-```{r}
-training$Day2 <- training$Day^2
-testing$Day2 <- testing$Day^2
-fullSet <- c(fullSet, "Day2")
-reducedSet <- c(reducedSet, "Day2")
+### Model 1: Full Set
 
+```{r train_m1}
+# Kuhn added a singled tranformed variable, but I've added 14 transformations
+#training$Day2 <- training$Day^2
+#testing$Day2 <- testing$Day^2
+fullSet_Day2 <- c(fullSet, "Day2")
+reducedSet_Day2 <- c(reducedSet, "Day2")
 
 set.seed(476)
-lr_full <- train(
-  training[, fullSet],
+mdl_1 <- train(
+  training2[, fullSet_Day2],
   y = training$Class,
   method = "glm",
   family = "binomial",
   metric = "ROC",
   trControl = ctrl
 ) 
-lr_full
+mdl_1
 ```
 
-From the training set of 8,190 observations and 1075 predictor variables, caret trained the model on the indexed 6,633 pre-2008 observations. The  “Resampling Results” is the performance estimate of the 2008 holdout set. The model achieved an area under the ROC curve of 0.782, a sensitivity of 0.754 and a specificity of 0.761 on the 2008 holdout set. 
-
-Now fit the reduced-predictor-set model.
+From the training set of 8,190 observations and 1076 predictor variables, caret trained the model on the indexed 6,633 pre-2008 observations. The  “Resampling Results” is the performance estimate of the 2008 holdout set. The model achieved an area under the ROC curve of 0.785, a sensitivity of 0.761 and a specificity of 0.772 on the 2008 holdout set. The confusion matrix calculates other measures.
 
 ```{r}
+confusionMatrix(data = mdl_1$pred$pred, reference = mdl_1$pred$obs)
+```
+
+The prediction accuracy was 0.768.
+
+
+### Model 2: Reduced Set
+
+Now fit the reduced-predictor-set (the 253 predictors with frequency ratio >= 8190 / 50) model.
+
+```{r train_m2}
 set.seed(476)
-lr_reduced <- train(
-  training[, reducedSet],
+mdl_2 <- train(
+  training2[, reducedSet_Day2],
   y = training$Class,
   method = "glm",
   family = "binomial",
   metric = "ROC",
   trControl = ctrl
 ) 
-lr_reduced
-summary(lr_reduced)["coefficients"] %>% data.frame()
+mdl_2
 ```
 
-Removing the near-zero variance predictors improved the model performance. For the reduced set of 253 variables, the area under the  ROC curve was 0.875, the sensitivity was 0.786, and the specificity was 0.831.  
+Removing the low-frequence predictors improved the model performance. For the reduced set of 253 variables, the area under the ROC curve increased from 0.785 to 0.877, and the sensitivity and specificity also increased.  
 
-For logistic regression you can assess the slope coeficients with the Z statistic.  Kuhn describes it as a "signal to noise ratio", the estimated slope divided by the standard error.  The five most important predictors were the number of unsuccessful grants by chief investigators, the number of successful grants by chief investigators, contract value band F, contract value band E, and numeric day of the year (squared).
+For logistic regression you can assess the slope coeficients with the Z statistic.  Kuhn describes it as a "signal to noise ratio", the estimated slope divided by the standard error.  The most important predictors, based on the Z statistic, were the number of unsuccessful and successful grants by chief investigators, contract value band F, and the squared numeric day of the year.
 
 ```{r}
-varImp(lr_reduced, scale = FALSE)
+varImp(mdl_2, scale = FALSE)
 ```
 
 
-The predictions for the holdout set (the year 2008 grants) is contained in the sub-object `pred`.
+The predictions for the holdout set (the year 2008 grants) are in the sub-object `pred`.
 
 ```{r}
-head(lrReduced$pred) 
+head(mdl_2$pred) 
 ```
 
-Note the column in the output labeled .parameter. When train saves predictions, it does so for every tuning parameter. This column in the output is  used to label which model generated the predictions. This version of logistic  regression has no tuning parameters, so .parameter has a single value ("none"). 
-
-Use this data to calculate the confusion matrix.
+Train saves predictions for every tuning parameter.  Column `parameter` identifies which model generated the predictions. This version of logistic regression has no tuning parameters, so `parameter` always equals "none". Use the confusion matrix to get the Accuracy.
 
 ```{r}
-confusionMatrix(data = lrReduced$pred$pred, reference = lrReduced$pred$obs)  
+mdl_2_cm <- confusionMatrix(data = mdl_2$pred$pred, reference = mdl_2$pred$obs)  
+mdl_2_cm
+plot(mdl_2_cm$table)
 ```
 
-These results match the values shown above for lrReduced. The ROC curve  can also be computed and plotted using the pROC package:  
+The accuracy was 0.8092 - an improvement over the 0.768 from the full-set model. Generate the ROC curve with `pROC::roc()`.  
 
 ```{r}
 library(pROC)
-reducedRoc <- roc(
-  response = lrReduced$pred$obs,
-  predictor = lrReduced$pred$successful,
-  levels = rev(levels(lrReduced$pred$obs))
+mdl_2_roc <- roc(
+  response = mdl_2$pred$obs,
+  predictor = mdl_2$pred$successful,
+  levels = rev(levels(mdl_2$pred$obs))
 )
-plot(reducedRoc, legacy.axes = TRUE)
-auc(reducedRoc) 
-a <- roc(
-  response = training[-pre2008, "Class"],
-  predictor = 1 - predict(modelFit, training[-pre2008,], type = "response"),
-  levels = rev(levels(training[-pre2008, "Class"])))
-plot(a)
+
+ggroc(mdl_2_roc) + 
+  theme_minimal() + 
+  ggtitle("Logistic Regression Model ROC Curve") + 
+    geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed")
+
+auc(mdl_2_roc) 
 ```
+ 
+ 
+### Model 3: Reduced Set 2.0
+
+Kuhn demonstrated the transformation principle with just variable `Day`.  I applied accross the entire reduced predictor set and found 14 variables to transform.  What was the performance lift?
+
+```{r train_m3}
+set.seed(476)
+mdl_3 <- train(
+  training2[, reducedSet2],
+  y = training2$Class,
+  method = "glm",
+  family = "binomial",
+  metric = "ROC",
+  trControl = ctrl
+) 
+mdl_3
+```
+
+Adding the transformed variables improved the model performance. For the reduced and transformed set of 274 variables, the area under the ROC curve increased from 0.877 to 0.882. The sensitivity actually fell a little (from 0.784 to 0.752), but the specificity increased (from 0.824 to 0.854).
+
+```{r}
+mdl_3_cm <- confusionMatrix(data = mdl_3$pred$pred, reference = mdl_3$pred$obs)  
+mdl_3_cm
+```
+
+The accuracy improved from 0.8092 to 0.8170.
